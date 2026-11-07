@@ -1,0 +1,6 @@
+.DS_Store
+_temp_asar/
+node_modules/
+*.tmp
+*.log
+scratch/

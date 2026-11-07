@@ -1,0 +1,133 @@
+{
+  "Agent": {
+    "zh": "智能体",
+    "avoid": [
+      "代理"
+    ]
+  },
+  "Artifact": {
+    "zh": "工件",
+    "avoid": [
+      "交付件",
+      "产物"
+    ]
+  },
+  "Browser": {
+    "zh": "浏览器",
+    "avoid": []
+  },
+  "Commit": {
+    "zh": "提交",
+    "avoid": []
+  },
+  "Conversation": {
+    "zh": "对话",
+    "avoid": [
+      "会话"
+    ]
+  },
+  "Credit": {
+    "zh": "额度",
+    "avoid": [
+      "积分",
+      "点数"
+    ]
+  },
+  "Diff": {
+    "zh": "差异",
+    "avoid": []
+  },
+  "Extension": {
+    "zh": "扩展",
+    "avoid": [
+      "插件"
+    ]
+  },
+  "Folder": {
+    "zh": "文件夹",
+    "avoid": []
+  },
+  "Model": {
+    "zh": "模型",
+    "avoid": []
+  },
+  "Permission": {
+    "zh": "权限",
+    "avoid": []
+  },
+  "Project": {
+    "zh": "项目",
+    "avoid": [
+      "工程"
+    ]
+  },
+  "Repository": {
+    "zh": "仓库",
+    "avoid": [
+      "存储库"
+    ]
+  },
+  "Review": {
+    "zh": "审查",
+    "avoid": [
+      "审阅",
+      "评审"
+    ]
+  },
+  "Rule": {
+    "zh": "规则",
+    "avoid": []
+  },
+  "Sandbox": {
+    "zh": "沙箱",
+    "avoid": [
+      "沙盒"
+    ]
+  },
+  "Server": {
+    "zh": "服务器",
+    "avoid": [
+      "服务端"
+    ]
+  },
+  "Settings": {
+    "zh": "设置",
+    "avoid": []
+  },
+  "Skill": {
+    "zh": "技能",
+    "avoid": []
+  },
+  "Subagent": {
+    "zh": "子智能体",
+    "avoid": [
+      "子代理"
+    ]
+  },
+  "Tab": {
+    "zh": "标签页",
+    "avoid": [
+      "选项卡"
+    ]
+  },
+  "Terminal": {
+    "zh": "终端",
+    "avoid": []
+  },
+  "Token": {
+    "zh": "Token",
+    "avoid": [
+      "词元"
+    ]
+  },
+  "Workflow": {
+    "zh": "工作流",
+    "avoid": []
+  },
+  "Workspace": {
+    "zh": "工作区",
+    "avoid": [
+      "工作空间"
+    ]
+  }
+}
