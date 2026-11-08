@@ -32,14 +32,14 @@ Antigravity 简体中文汉化（CDP 运行时注入，不修改应用包）
   --bundle <文件>       i18n extract 使用本地前端 bundle，不连接应用
   --json                i18n check / missing 输出 JSON
 
-配置: ${paths.CONFIG_FILE}
-自定义词条: ${paths.USER_MESSAGES_FILE}
+配置: ${paths.tilde(paths.CONFIG_FILE)}
+自定义词条: ${paths.tilde(paths.USER_MESSAGES_FILE)}
 `;
 
 function printApp() {
     const info = app.inspect();
     if (!info) return console.warn('[应用] 未找到 Antigravity.app');
-    console.log(`[应用] ${info.path} v${info.version}`);
+    console.log(`[应用] ${paths.tilde(info.path)} v${info.version}`);
     if (info.updatable) console.log('[签名] Google 官方签名有效，应用内更新可用');
     else console.warn(`[签名] 签名无效或非官方 (TeamID=${info.teamId || '无'})，应用内更新会失败，请重新安装官方版`);
 }
@@ -50,8 +50,8 @@ async function install({ font, brandTitle }) {
     printApp();
     service.install();
     console.log(`[配置] 字体=${config.font} 品牌标题=${config.brandTitle} 词条=${entries}`);
-    console.log(`[服务] ${paths.AGENT_PLIST}`);
-    console.log(`[日志] ${paths.LOG_FILE}`);
+    console.log(`[服务] ${paths.tilde(paths.AGENT_PLIST)}`);
+    console.log(`[日志] ${paths.tilde(paths.LOG_FILE)}`);
     console.log('[完成] 运行中的 Antigravity 将在数秒内切换为中文');
 }
 
