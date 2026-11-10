@@ -18,7 +18,7 @@ Antigravity 简体中文本地化与字体增强工具。
 
 - **系统**：macOS 27.2（Apple Silicon M1）
 - **Node.js**：`v26.13.0`（最低 `>= 22`）
-- **应用**：Antigravity `2.29.1` 官方版（`/Applications/Antigravity.app`）
+- **应用**：Antigravity `2.30.0` 官方版（`/Applications/Antigravity.app`）
 
 ---
 
