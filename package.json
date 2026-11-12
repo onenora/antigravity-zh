@@ -1,6 +1,6 @@
 {
   "name": "antigravity-zh",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Antigravity macOS 简体中文汉化：CDP 运行时注入，不修改应用包，保留官方签名与应用内更新",
   "main": "bin/cli.js",
   "bin": {
