@@ -21,7 +21,8 @@
         '[data-quotable-inline="true"]', '.md-divider-spacing', '.cursor-edit',
         '[data-testid="conversation-row-sidebar"] span.truncate',
         '[data-testid="user-input-step"] [data-quotable="true"]', '[data-testid="user-input-step"] .whitespace-pre-wrap',
-        '[data-testid="planner-response-text"]', '[data-testid="thinking-collapsible-trigger"] ~ div'
+        '[data-testid="planner-response-text"]', '[data-testid="progress-update-response-text"]',
+        '[data-testid="agent-response"] [data-markdown-root]', '[data-testid="thinking-collapsible-trigger"] ~ div'
     ].join(',');
 
     const isPath = (s) => /^(?:[~/]|\.\.?\/|file:\/\/).*\//.test(s) || /\/\.gemini\/|\/SKILL\.md/i.test(s);
@@ -90,6 +91,8 @@
         const t = translate(key);
         if (t == null) {
             if (inline) return false;
+            // 若各子节点均为独立完整句子（如 model unavailable + " Pick a model to change it."），交由 visitText 逐句翻译
+            if (sources[0].every((s) => !s.trim() || /[.!?]$/.test(s.trim()))) return false;
             // 纯文本拼接（"No ", plural, " yet"）整句无译文时保持原文，避免逐段翻译出「否 automations yet」
             slots[0].forEach((node, j) => write(node, sources[0][j], sources[0][j]));
             groups.add(el);
