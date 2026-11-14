@@ -22,7 +22,10 @@
         '[data-testid="conversation-row-sidebar"] span.truncate',
         '[data-testid="user-input-step"] [data-quotable="true"]', '[data-testid="user-input-step"] .whitespace-pre-wrap',
         '[data-testid="planner-response-text"]', '[data-testid="progress-update-response-text"]',
-        '[data-testid="agent-response"] [data-markdown-root]', '[data-testid="thinking-collapsible-trigger"] ~ div'
+        '[data-testid="agent-response"] [data-markdown-root]', '[data-testid="thinking-collapsible-trigger"] ~ div',
+        '[data-testid="side-question-followup-user"]', '[data-testid="side-question-answer"] [data-markdown-root]',
+        '[data-testid="automation-instructions-markdown"]', '[data-testid="lsp-symbol-hover-card"]',
+        '[data-testid="webview-download-filename"]', '[data-testid="live-user-turn"]', '[data-testid="live-agent-turn"]'
     ].join(',');
 
     const isPath = (s) => /^(?:[~/]|\.\.?\/|file:\/\/).*\//.test(s) || /\/\.gemini\/|\/SKILL\.md/i.test(s);
