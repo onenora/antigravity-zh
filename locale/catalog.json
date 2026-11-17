@@ -1,5 +1,5 @@
 {
-  "app": "2.32.1",
+  "app": "2.32.2",
   "strings": [
     "\" already exists.",
     "\" not found.",
@@ -368,7 +368,6 @@
     "API key",
     "Apostrophe",
     "App",
-    "App Settings",
     "App update required",
     "App version",
     "App view for {0}",
