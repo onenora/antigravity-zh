@@ -16,6 +16,7 @@ Antigravity 简体中文汉化（CDP 运行时注入，不修改应用包）
 
 命令:
   install     部署守护进程，Antigravity 启动后自动汉化
+  launch      以远程调试参数启动 Antigravity（2.33.0+ 所需）
   uninstall   移除守护进程，恢复英文界面
   status      查看守护进程、窗口注入与应用签名状态
   daemon      前台运行守护进程（供 LaunchAgent 调用）
@@ -29,6 +30,7 @@ Antigravity 简体中文汉化（CDP 运行时注入，不修改应用包）
 选项:
   --font <名称>         字体，默认 JKaiMono，none 表示不注入
   --brand-title <模式>  ${BRAND_TITLE_MODES.join(' | ')}
+  --restart             launch 时若应用正在运行但未开启 CDP，先退出再重启
   --bundle <文件>       i18n extract 使用本地前端 bundle，不连接应用
   --json                i18n check / missing 输出 JSON
 
@@ -52,7 +54,25 @@ async function install({ font, brandTitle }) {
     console.log(`[配置] 字体=${config.font} 品牌标题=${config.brandTitle} 词条=${entries}`);
     console.log(`[服务] ${paths.tilde(paths.AGENT_PLIST)}`);
     console.log(`[日志] ${paths.tilde(paths.LOG_FILE)}`);
-    console.log('[完成] 运行中的 Antigravity 将在数秒内切换为中文');
+    const { reachable } = await probe();
+    if (app.isRunning() && !reachable) {
+        console.log('[提示] 当前运行中的 Antigravity 未开启远程调试端口（2.33.0+ 默认关闭），请运行 node bin/cli.js launch --restart 重启后生效');
+    } else {
+        console.log('[完成] 运行中的 Antigravity 将在数秒内切换为中文');
+    }
+}
+
+async function launch({ restart }) {
+    const info = app.inspect();
+    if (!info) throw new Error('未找到 Antigravity.app');
+    const { reachable } = await probe();
+    if (app.isRunning() && !reachable) {
+        if (!restart) throw new Error('Antigravity 运行中但未开启远程调试端口；请先退出应用，或传入 --restart 重启');
+        console.log('[应用] 正在退出 Antigravity...');
+        if (!app.quit()) throw new Error('等待 Antigravity 退出超时，请手动退出后重试');
+    }
+    app.launch(info.path);
+    console.log('[完成] 已以 --remote-debugging-port=0 启动 Antigravity，守护进程将自动注入汉化');
 }
 
 async function uninstall() {
@@ -67,14 +87,21 @@ async function status() {
     console.log(`[服务] ${!agent.loaded ? '未安装' : agent.pid ? `运行中 (pid ${agent.pid})` : '已加载，未运行'}`);
     const expected = buildBundle(loadConfig()).version;
     const { port, reachable, results } = await probe();
-    if (!reachable) return console.log(`[窗口] Antigravity 未运行${port ? ` (端口 ${port} 无响应)` : ''}`);
+    if (!reachable) {
+        if (app.isRunning()) {
+            console.log('[窗口] Antigravity 运行中，但未开启远程调试端口（2.33.0+ 默认关闭 CDP）');
+            console.log('[提示] 运行 node bin/cli.js launch --restart 以开启汉化（或使用 open -a Antigravity --args --remote-debugging-port=0 启动）');
+            return;
+        }
+        return console.log(`[窗口] Antigravity 未运行${port ? ` (端口 ${port} 无响应)` : ''}`);
+    }
     for (const w of results) {
         const state = w.version === expected ? '已汉化' : w.version ? '待更新' : '未汉化';
         console.log(`[窗口] ${w.url} ${state}`);
     }
 }
 
-const COMMANDS = { install, uninstall, status, daemon: runDaemon, i18n: (options, sub) => i18n.run(sub, options) };
+const COMMANDS = { install, launch, uninstall, status, daemon: runDaemon, i18n: (options, sub) => i18n.run(sub, options) };
 
 async function main() {
     const { positionals, values } = parseArgs({
@@ -82,6 +109,7 @@ async function main() {
         options: {
             font: { type: 'string' },
             'brand-title': { type: 'string' },
+            restart: { type: 'boolean' },
             bundle: { type: 'string' },
             json: { type: 'boolean' },
             help: { type: 'boolean', short: 'h' }
@@ -93,7 +121,7 @@ async function main() {
     if (process.platform !== 'darwin') throw new Error('仅支持 macOS');
     if (typeof WebSocket !== 'function') throw new Error(`需要 Node.js >= 22，当前 ${process.version}`);
 
-    const options = { bundle: values.bundle, json: values.json };
+    const options = { bundle: values.bundle, json: values.json, restart: values.restart };
     if (values.font) options.font = values.font;
     if (values['brand-title']) {
         if (!BRAND_TITLE_MODES.includes(values['brand-title'])) throw new Error(`--brand-title 仅支持 ${BRAND_TITLE_MODES.join(' | ')}`);

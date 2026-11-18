@@ -18,7 +18,7 @@ Antigravity 简体中文本地化与字体增强工具。
 
 - **系统**：macOS 27.2（Apple Silicon M1）
 - **Node.js**：`v26.13.0`（最低 `>= 22`）
-- **应用**：Antigravity `2.32.2` 官方版（`/Applications/Antigravity.app`）
+- **应用**：Antigravity `2.33.0` 官方版（`/Applications/Antigravity.app`）
 
 ---
 
@@ -34,10 +34,13 @@ node bin/cli.js install --font "JetBrains Mono"
 # 3. 纯净汉化（不注入字体）
 node bin/cli.js install --font none
 
-# 4. 查看服务与窗口状态
+# 4. 启动 Antigravity（2.33.0 起需带远程调试参数启动）
+node bin/cli.js launch
+
+# 5. 查看服务与窗口状态
 node bin/cli.js status
 
-# 5. 卸载，恢复官方英文界面
+# 6. 卸载，恢复官方英文界面
 node bin/cli.js uninstall
 ```
 
@@ -93,7 +96,9 @@ antigravity-zh/
 
 ### 2. Antigravity 官方推送新版本后如何升级？
 
-无需任何操作，汉化自动跟随。更新汉化本身：`git pull` 后重新运行 `node bin/cli.js install`。
+应用内更新不受影响，更新汉化本身：`git pull` 后重新运行 `node bin/cli.js install`。
+
+> **注意**：Antigravity `2.33.0` 起默认不再开启 CDP 远程调试端口，直接从启动台/程序坞打开无法注入汉化。请使用 `node bin/cli.js launch`（或 `open -a Antigravity --args --remote-debugging-port=0`）启动；若应用已运行，可执行 `node bin/cli.js launch --restart`。
 
 ### 3. 为什么部分界面仍是英文？
 

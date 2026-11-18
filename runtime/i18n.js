@@ -25,7 +25,8 @@
         '[data-testid="agent-response"] [data-markdown-root]', '[data-testid="thinking-collapsible-trigger"] ~ div',
         '[data-testid="side-question-followup-user"]', '[data-testid="side-question-answer"] [data-markdown-root]',
         '[data-testid="automation-instructions-markdown"]', '[data-testid="lsp-symbol-hover-card"]',
-        '[data-testid="webview-download-filename"]', '[data-testid="live-user-turn"]', '[data-testid="live-agent-turn"]'
+        '[data-testid="webview-download-filename"]', '[data-testid="live-user-turn"]', '[data-testid="live-agent-turn"]',
+        '[data-testid="transcript-line-text"]'
     ].join(',');
 
     const isPath = (s) => /^(?:[~/]|\.\.?\/|file:\/\/).*\//.test(s) || /\/\.gemini\/|\/SKILL\.md/i.test(s);
