@@ -8,6 +8,8 @@
   },
   "scripts": {
     "setup": "node bin/cli.js install",
+    "launch": "node bin/cli.js launch",
+    "launcher": "node bin/cli.js launcher",
     "status": "node bin/cli.js status",
     "remove": "node bin/cli.js uninstall"
   },

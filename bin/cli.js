@@ -18,11 +18,12 @@ Antigravity 简体中文汉化（双引擎零侵入注入，不修改官方应�
 用法: node bin/cli.js <命令> [选项]
 
 命令:
-  install     安装启动器（Antigravity 中文版.app）与降级守护进程
-  launch      按当前引擎启动 Antigravity（Hook 优先，不可用时自动降级 CDP）
-  uninstall   移除启动器与守护进程，恢复英文界面
-  status      查看应用签名、Fuse、启动器、引擎与窗口状态
-  daemon      前台运行事件驱动守护进程（供 LaunchAgent 调用）
+  install            部署运行时与降级守护进程（默认通过 launch 命令启动）
+  launch             通过 CLI 启动 Antigravity（Hook 优先，不可用时自动降级 CDP）
+  launcher [remove]  单独编译原生 Swift 启动器 ${paths.tilde(paths.LAUNCHER_APP)}（remove 移除）
+  uninstall          移除守护进程与启动器，恢复英文界面
+  status             查看应用签名、Fuse、启动器、引擎与窗口状态
+  daemon             前台运行事件驱动守护进程（供 LaunchAgent 调用）
 
 词条维护（见 AGENTS.md）:
   i18n extract   从运行中的 Antigravity 生成原文清单 locale/catalog.json
@@ -34,7 +35,6 @@ Antigravity 简体中文汉化（双引擎零侵入注入，不修改官方应�
   --font <名称>         字体，默认 JKaiMono，none 表示不注入
   --brand-title <模式>  ${BRAND_TITLE_MODES.join(' | ')}
   --engine <模式>       注入引擎：${ENGINES.join(' | ')}（默认 auto）
-  --no-launcher         install 时不创建 ~/Applications/${paths.LAUNCHER_NAME}.app
   --restart             launch 时若应用正在英文模式下运行，先退出再重启
   --bundle <文件>       i18n extract 使用本地前端 bundle，不连接应用
   --json                i18n check / missing 输出 JSON
@@ -62,7 +62,7 @@ function printApp() {
     return info;
 }
 
-async function install({ font, brandTitle, engine, noLauncher }) {
+async function install({ font, brandTitle, engine }) {
     const info = printApp();
     const current = loadConfig();
     const targetEngine = engine || current.engine;
@@ -71,19 +71,20 @@ async function install({ font, brandTitle, engine, noLauncher }) {
         enabled: true,
         ...(font && { font }),
         ...(brandTitle && { brandTitle }),
-        ...(engine && { engine }),
-        ...(noLauncher ? { launcher: false } : {})
+        ...(engine && { engine })
     });
     const { entries } = buildBundle(config);
-    service.install(process.execPath, {
-        engine: config.engine,
-        useLauncher: config.launcher,
-        appPath: info && info.path
-    });
+    service.install(process.execPath, { engine: config.engine });
     console.log(`[配置] 字体=${config.font} 品牌标题=${config.brandTitle} 引擎=${config.engine}（当前生效=${resolved}）词条=${entries}`);
-    if (config.launcher) console.log(`[启动器] ${paths.tilde(paths.LAUNCHER_APP)}`);
     if (config.engine !== 'hook') console.log(`[服务] ${paths.tilde(paths.AGENT_PLIST)}`);
     console.log(`[日志] ${paths.tilde(paths.LOG_FILE)}`);
+
+    const lStatus = launcher.launcherStatus();
+    if (!lStatus.installed) {
+        console.log(`[启动器] 未构建（默认使用 node bin/cli.js launch 启动；如需图标启动可运行 node bin/cli.js launcher）`);
+    } else {
+        console.log(`[启动器] 已存在 ${paths.tilde(lStatus.path)}（可运行 node bin/cli.js launcher 重新编译）`);
+    }
 
     const hookState = app.readHookState();
     if (hookState) {
@@ -92,15 +93,15 @@ async function install({ font, brandTitle, engine, noLauncher }) {
     }
     const { reachable } = await probe();
     if (app.isRunning() && !reachable) {
-        console.log('[提示] 当前运行中的 Antigravity 未启用汉化，请运行 node bin/cli.js launch --restart（或改用「Antigravity 中文版」启动）');
+        console.log('[提示] 当前运行中的 Antigravity 未启用汉化，请运行 node bin/cli.js launch --restart');
     } else if (reachable) {
         console.log('[完成] 运行中的 Antigravity 将在数秒内切换为中文');
     } else {
-        console.log(`[完成] 可直接打开「${paths.LAUNCHER_NAME}」或运行 node bin/cli.js launch 启动汉化版`);
+        console.log('[完成] 运行 node bin/cli.js launch 启动汉化版');
     }
 }
 
-async function launch({ restart, engine, fromLauncher }) {
+async function launch({ restart, engine }) {
     const info = app.inspect();
     if (!info) throw new Error('未找到 Antigravity.app');
     const config = loadConfig();
@@ -115,9 +116,7 @@ async function launch({ restart, engine, fromLauncher }) {
     }
 
     if (app.isRunning()) {
-        if (fromLauncher) {
-            if (!app.confirmRelaunchDialog()) return;
-        } else if (!restart) {
+        if (!restart) {
             throw new Error('Antigravity 正在以官方英文模式运行；请先退出应用，或传入 --restart 重启');
         }
         console.log('[应用] 正在退出 Antigravity...');
@@ -135,6 +134,24 @@ async function launch({ restart, engine, fromLauncher }) {
     }
 }
 
+async function buildLauncherCmd(_options, sub = 'build') {
+    if (sub === 'remove' || sub === 'uninstall') {
+        launcher.uninstallLauncher();
+        console.log(`[启动器] 已移除 ${paths.tilde(paths.LAUNCHER_APP)}`);
+        return;
+    }
+    if (sub !== 'build') {
+        throw new Error(`未知子命令 launcher ${sub}，可用: build | remove`);
+    }
+    const info = app.inspect();
+    if (!info) throw new Error('未找到 Antigravity.app');
+    if (!fs.existsSync(paths.MAIN_HOOK_FILE)) service.deployRuntime();
+    console.log('[启动器] 正在编译原生 Swift 启动器...');
+    const out = launcher.buildLauncher(info.path);
+    console.log(`[启动器] 构建完成: ${paths.tilde(out)}`);
+    console.log('[完成] 现在可直接双击或在启动台/Spotlight 中打开 Antigravity-zh.app');
+}
+
 async function uninstall() {
     const hookState = app.readHookState();
     if (hookState) {
@@ -147,14 +164,17 @@ async function uninstall() {
     const extras = [];
     if (hookState) extras.push('已还原活跃 Hook 窗口与原生菜单');
     if (cdpCount) extras.push(`停止 ${cdpCount} 个 CDP 窗口的汉化`);
-    console.log(`[完成] 已移除启动器与守护进程${extras.length ? `（${extras.join('，')}）` : ''}`);
+    console.log(`[完成] 已移除守护进程与启动器${extras.length ? `（${extras.join('，')}）` : ''}`);
 }
 
 async function status() {
     printApp();
     const config = loadConfig();
     const lStatus = launcher.launcherStatus();
-    console.log(`[启动器] ${lStatus.installed ? `已安装 (${paths.tilde(lStatus.path)})` : '未安装'}`);
+    console.log(`[启动器] ${lStatus.installed ? `已构建 (${paths.tilde(lStatus.path)})` : '未构建（默认 CLI 启动；可运行 node bin/cli.js launcher 构建）'}`);
+    if (lStatus.legacyExists) {
+        console.log(`[提示] 检测到旧版启动器 ${paths.tilde(paths.LEGACY_LAUNCHER_APP)}，可运行 node bin/cli.js launcher remove 清理`);
+    }
     const agent = service.status();
     console.log(`[服务] ${!agent.loaded ? (config.engine === 'hook' ? '未安装（纯 Hook 模式无需常驻）' : '未安装') : agent.pid ? `运行中 (pid ${agent.pid})` : '已加载，未运行'}`);
 
@@ -177,7 +197,7 @@ async function status() {
     if (!reachable) {
         if (app.isRunning()) {
             console.log('[窗口] Antigravity 运行中（未检测到主进程 Hook 或 CDP 端口）');
-            console.log(`[提示] 请通过「${paths.LAUNCHER_NAME}」打开，或运行 node bin/cli.js launch --restart`);
+            console.log('[提示] 运行 node bin/cli.js launch --restart 以开启汉化');
             return;
         }
         return console.log(`[窗口] Antigravity 未运行${port ? ` (端口 ${port} 无响应)` : ''}`);
@@ -189,7 +209,15 @@ async function status() {
     }
 }
 
-const COMMANDS = { install, launch, uninstall, status, daemon: runDaemon, i18n: (options, sub) => i18n.run(sub, options) };
+const COMMANDS = {
+    install,
+    launch,
+    launcher: buildLauncherCmd,
+    uninstall,
+    status,
+    daemon: runDaemon,
+    i18n: (options, sub) => i18n.run(sub, options)
+};
 
 async function main() {
     const { positionals, values } = parseArgs({
@@ -198,8 +226,6 @@ async function main() {
             font: { type: 'string' },
             'brand-title': { type: 'string' },
             engine: { type: 'string' },
-            'no-launcher': { type: 'boolean' },
-            'from-launcher': { type: 'boolean' },
             restart: { type: 'boolean' },
             bundle: { type: 'string' },
             json: { type: 'boolean' },
@@ -215,9 +241,7 @@ async function main() {
     const options = {
         bundle: values.bundle,
         json: values.json,
-        restart: values.restart,
-        noLauncher: values['no-launcher'],
-        fromLauncher: values['from-launcher']
+        restart: values.restart
     };
     if (values.font) options.font = values.font;
     if (values['brand-title']) {

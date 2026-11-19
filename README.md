@@ -9,7 +9,7 @@ Antigravity 简体中文本地化与字体增强工具。
 - **双引擎零侵入**：不修改 `Antigravity.app`，官方签名完整，应用内更新照常可用。
   - **主引擎（主进程 Hook）**：启动时通过临时 `--inspect-brk` 一次性加载主进程 Hook 并随即关闭调试端口，运行期零开放端口、零首屏英文闪烁，支持原生菜单栏 / Dock / 托盘 / 对话框汉化，无需后台常驻轮询。
   - **降级引擎（事件驱动 Browser CDP）**：当未来上游版本关闭 `EnableNodeCliInspectArguments` Fuse 时自动降级，单连接 `Target.setAutoAttach` + `fs.watch` 替代高频轮询。
-- **独立启动器**：安装时自动在 `~/Applications/` 生成 **Antigravity 中文版.app**（复用官方图标，不留双 Dock 图标），可直接从启动台、Spotlight 或 Dock 打开。
+- **独立原生启动器（可选）**：运行 `node bin/cli.js launcher` 可用原生 Swift 编译生成 `~/Applications/Antigravity-zh.app`（复用官方图标，零 Node.js 运行时依赖，不留双 Dock 图标），构建后也可直接通过启动台、Spotlight 或 Dock 点击启动。
 - **热更新**：配置与自定义词条保存后数秒生效，无需重启应用。
 - **精准隔离**：代码编辑器、终端、对话正文与文件路径保持原样。
 - **字体覆盖与保护**：默认 [JKaiMono](https://github.com/onenora/JKaiMono)，覆盖 UI、编辑器与终端并保护图标字体；字体未安装时保持系统字体。
@@ -27,7 +27,7 @@ Antigravity 简体中文本地化与字体增强工具。
 ## 使用方法
 
 ```bash
-# 1. 安装简体中文汉化（默认字体 JKaiMono，同时生成「Antigravity 中文版.app」）
+# 1. 安装运行时与配置（默认字体 JKaiMono）
 node bin/cli.js install
 
 # 2. 指定自定义字体（例如 JetBrains Mono）
@@ -36,22 +36,28 @@ node bin/cli.js install --font "JetBrains Mono"
 # 3. 纯净汉化（不注入字体）
 node bin/cli.js install --font none
 
-# 4. 启动 Antigravity（或直接双击 ~/Applications/Antigravity 中文版.app）
+# 4. 默认通过 CLI 启动 Antigravity
 node bin/cli.js launch
 
-# 5. 查看服务、Fuse、引擎与窗口状态
+# 5. （可选）单独编译原生 Swift 启动器 ~/Applications/Antigravity-zh.app
+node bin/cli.js launcher
+# 构建后点击该 .app 亦可启动汉化版；移除启动器：node bin/cli.js launcher remove
+
+# 6. 查看服务、Fuse、启动器、引擎与窗口状态
 node bin/cli.js status
 
-# 6. 卸载，恢复官方英文界面
+# 7. 卸载，恢复官方英文界面
 node bin/cli.js uninstall
 ```
 
 也可以通过 npm scripts 快速执行：
 
 ```bash
-npm run setup    # 安装
-npm run status   # 状态
-npm run remove   # 卸载
+npm run setup     # 安装
+npm run launch    # CLI 启动
+npm run launcher  # 构建原生 Swift 启动器（可选）
+npm run status    # 状态
+npm run remove    # 卸载
 ```
 
 #### CLI 参数说明
@@ -61,7 +67,6 @@ npm run remove   # 卸载
 | `--font <字体名>` | `JKaiMono` | 自定义字体；`none` 禁用字体注入 |
 | `--brand-title <模式>` | `english` | 品牌名：`english`（保持英文）/ `hidden`（隐藏）/ `translated`（翻译） |
 | `--engine <模式>` | `auto` | 引擎：`auto`（Hook 优先，自动降级）/ `hook`（仅主进程 Hook）/ `cdp`（仅事件驱动 CDP） |
-| `--no-launcher` | `false` | `install` 时不创建 `~/Applications/Antigravity 中文版.app` |
 | `--restart` | `false` | `launch` 时若应用正以英文运行，先退出再重启 |
 | `-h`, `--help` | - | 查看命令行帮助 |
 
@@ -69,7 +74,7 @@ npm run remove   # 卸载
 
 | 路径 | 说明 |
 | :--- | :--- |
-| `~/Applications/Antigravity 中文版.app` | 原生启动器（可拖入 Dock / Spotlight 打开） |
+| `~/Applications/Antigravity-zh.app` | 原生 Swift 启动器（可选，由 `launcher` 命令单独构建） |
 | `~/.antigravity-zh/config.json` | 配置；`"enabled": false` 暂停汉化 |
 | `~/.antigravity-zh/messages.json` | 自定义词条，优先级最高，如 `{ "Settings": "偏好设置" }` |
 | `~/Library/Logs/antigravity-zh.log` | 运行日志（超过 1 MB 自动轮转截断） |
@@ -82,9 +87,11 @@ npm run remove   # 卸载
 antigravity-zh/
 ├── bin/
 │   └── cli.js          # 命令行入口
+├── launcher/
+│   └── main.swift      # 原生 Swift 启动器源码（零运行时依赖）
 ├── lib/
 │   ├── app.js          # 应用检查、Electron Fuse 读取与双引擎启动
-│   ├── launcher.js     # 原生 macOS 启动器 .app 生成
+│   ├── launcher.js     # 原生 Swift 启动器编译与 .app 打包
 │   ├── daemon.js       # 事件驱动守护进程（降级 CDP 兜底）
 │   ├── service.js      # 运行时部署与 LaunchAgent
 │   ├── bundle.js       # 注入载荷构建
@@ -105,9 +112,9 @@ antigravity-zh/
 
 ### 2. Antigravity 官方推送新版本后如何升级？
 
-应用内更新不受影响，更新汉化本身：`git pull` 后重新运行 `node bin/cli.js install`。
+应用内更新不受影响，更新汉化本身：`git pull` 后重新运行 `node bin/cli.js install`（如已构建启动器可再运行 `node bin/cli.js launcher` 同步更新）。
 
-> **说明**：安装后会生成 `~/Applications/Antigravity 中文版.app`，推荐通过该启动器或 `node bin/cli.js launch` 打开（已汉化运行时会直接切至前台；若误从官方图标以英文启动，点击启动器会弹窗询问是否一键重启切换中文）。
+> **说明**：默认通过 `node bin/cli.js launch` 启动；若执行了 `node bin/cli.js launcher` 构建 `~/Applications/Antigravity-zh.app`，点击该启动器也可直接启动汉化版（已汉化运行时切至前台；若误从官方图标以英文启动，点击启动器会弹窗询问是否一键重启切换中文）。
 
 ### 3. 为什么部分界面仍是英文？
 

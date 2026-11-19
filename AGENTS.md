@@ -82,6 +82,7 @@ lib/i18n/               extract（bundle 文本提取）· catalog（清单生�
 lib/bundle.js           注入载荷 = 词条 + translator + i18n + 字体
 lib/cdp.js              降级引擎：单连接 Browser-level CDP（autoAttach）与目标发现
 lib/daemon.js           事件驱动后台守护进程（fs.watch + 兜底巡检，纯 CDP 降级用）
-lib/launcher.js         原生 macOS 启动器生成（~/Applications/Antigravity 中文版.app）
+lib/launcher.js         原生 Swift 启动器编译与打包（~/Applications/Antigravity-zh.app）
+launcher/main.swift     原生 Swift 启动器源码（零运行时 Node 依赖）
 lib/log.js              日志轮转写入
 ```
