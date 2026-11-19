@@ -21,8 +21,8 @@ const fmtExact = (n) => {
 
 const fmtMs = (ms) => {
     if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—';
-    if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
-    return `${Math.round(ms)} ms`;
+    if (ms >= 1000) return `${(ms / 1000).toFixed(1).replace(/\.0$/, '')}s`;
+    return `${Math.round(ms)}ms`;
 };
 
 const fmtPct = (ratio) => {
@@ -32,11 +32,104 @@ const fmtPct = (ratio) => {
 
 const fmtRate = (rate) => {
     if (rate === null || rate === undefined || !Number.isFinite(rate)) return '—';
-    return `${rate.toFixed(1)} tok/s`;
+    return `${rate.toFixed(1).replace(/\.0$/, '')} tok/s`;
 };
+
+function parseRgba(str) {
+    if (!str || typeof str !== 'string') return null;
+    const m = /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/i.exec(str);
+    if (!m) return null;
+    return {
+        r: Number(m[1]),
+        g: Number(m[2]),
+        b: Number(m[3]),
+        a: m[4] === undefined ? 1 : Number(m[4]),
+    };
+}
+
+const DEFAULT_FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+
+function isFontInstalled(name) {
+    if (!name) return false;
+    try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas && typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+        if (!ctx) return true;
+        const sample = 'mmmmmmmmmmlli 汉化字体 0123456789';
+        return ['monospace', 'serif', 'sans-serif'].some((base) => {
+            ctx.font = `72px ${base}`;
+            const width = ctx.measureText(sample).width;
+            ctx.font = `72px "${name}", ${base}`;
+            return ctx.measureText(sample).width !== width;
+        });
+    } catch {
+        return true;
+    }
+}
+
+function resolveFontStack(target, sampleEl) {
+    const configured = (typeof AGZH_METRICS_FONT === 'string') ? AGZH_METRICS_FONT.trim() : '';
+    if (configured && isFontInstalled(configured)) {
+        const safeName = configured.replace(/["\\]/g, '\\$&');
+        return `"${safeName}", "PingFang SC", -apple-system, BlinkMacSystemFont, monospace`;
+    }
+    try {
+        if (typeof getComputedStyle === 'function') {
+            const el = sampleEl || target || document.body;
+            const computed = el ? getComputedStyle(el).fontFamily : '';
+            if (computed && computed.trim()) return computed;
+        }
+    } catch {}
+    return DEFAULT_FONT_STACK;
+}
+
+function detectTheme(target, sampleEl) {
+    let dark = false;
+    try {
+        if (typeof getComputedStyle === 'function') {
+            let cur = target;
+            let bg = null;
+            while (cur) {
+                const c = parseRgba(getComputedStyle(cur).backgroundColor);
+                if (c && c.a > 0.15) { bg = c; break; }
+                cur = cur.parentElement;
+            }
+            if (!bg && document.body) {
+                const c = parseRgba(getComputedStyle(document.body).backgroundColor);
+                if (c && c.a > 0.15) bg = c;
+            }
+            if (bg) {
+                const lum = (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) / 255;
+                dark = lum < 0.5;
+            } else if (typeof window.matchMedia === 'function') {
+                dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+
+            if (sampleEl) {
+                const fg = parseRgba(getComputedStyle(sampleEl).color);
+                if (fg) {
+                    return {
+                        dark,
+                        fg: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.78)`,
+                        fgHover: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.98)`,
+                        divider: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.22)`,
+                    };
+                }
+            }
+        }
+    } catch {}
+    return {
+        dark,
+        fg: dark ? 'rgba(216, 222, 234, 0.76)' : 'rgba(55, 65, 81, 0.82)',
+        fgHover: dark ? 'rgba(244, 247, 252, 0.98)' : 'rgba(17, 24, 39, 0.98)',
+        divider: dark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(15, 23, 42, 0.18)',
+    };
+}
 
 let snapshot = (typeof AGZH_METRICS_INIT !== 'undefined' && AGZH_METRICS_INIT) ? AGZH_METRICS_INIT : null;
 let anchor = null;
+let observedLeft = null;
+let observedRight = null;
 let resizeObserver = null;
 let rafId = 0;
 let pollTimer = null;
@@ -47,59 +140,76 @@ let hovering = false;
 const host = document.createElement('div');
 host.id = 'agzh-metrics-host';
 host.setAttribute('translate', 'no');
-host.style.cssText = 'position:fixed;inset:auto;z-index:2147483000;pointer-events:none;display:none;margin:0;padding:0;';
+host.style.cssText = 'position:fixed;inset:auto;z-index:15;pointer-events:none;display:none;margin:0;padding:0;';
 
 const shadow = host.attachShadow({ mode: 'open' });
 const style = document.createElement('style');
 style.textContent = `
 :host {
   all: initial;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color-scheme: light dark;
+  --agzh-font: ${DEFAULT_FONT_STACK};
+  font-family: var(--agzh-font);
+  --agzh-fg: rgba(216, 222, 234, 0.78);
+  --agzh-fg-hover: rgba(244, 247, 252, 0.98);
+  --agzh-divider: rgba(255, 255, 255, 0.18);
+  --agzh-pill-bg: rgba(24, 26, 32, 0.9);
+  --agzh-pill-border: rgba(255, 255, 255, 0.14);
+  --agzh-card-bg: rgba(24, 27, 35, 0.97);
+  --agzh-card-fg: rgba(235, 238, 245, 0.95);
+  --agzh-card-border: rgba(255, 255, 255, 0.14);
+}
+:host([data-theme="light"]) {
+  --agzh-fg: rgba(55, 65, 81, 0.82);
+  --agzh-fg-hover: rgba(17, 24, 39, 0.98);
+  --agzh-divider: rgba(15, 23, 42, 0.18);
+  --agzh-pill-bg: rgba(250, 251, 254, 0.94);
+  --agzh-pill-border: rgba(15, 23, 42, 0.14);
+  --agzh-card-bg: rgba(255, 255, 255, 0.98);
+  --agzh-card-fg: rgba(20, 24, 34, 0.94);
+  --agzh-card-border: rgba(15, 23, 42, 0.14);
 }
 .agzh-pill {
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 11px;
+  gap: 5px;
+  height: 22px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 11.5px;
   line-height: 16px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  color: rgba(235, 238, 245, 0.92);
-  background: rgba(24, 26, 32, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  font-weight: 450;
+  font-variant-numeric: tabular-nums;
   cursor: default;
   user-select: none;
-  white-space: nowrap;
-  transition: border-color 140ms ease, background 140ms ease;
+  box-sizing: border-box;
+  border: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--agzh-fg);
+  padding: 2px 6px 2px 10px;
+  border-left: 1px solid var(--agzh-divider);
+  border-radius: 0;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
 }
 .agzh-pill:hover,
 .agzh-pill[data-open="true"] {
-  border-color: rgba(120, 175, 255, 0.55);
-  background: rgba(28, 32, 42, 0.96);
+  color: var(--agzh-fg-hover);
 }
-@media (prefers-color-scheme: light) {
-  .agzh-pill {
-    color: rgba(24, 28, 38, 0.9);
-    background: rgba(250, 251, 254, 0.9);
-    border-color: rgba(15, 23, 42, 0.14);
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.09);
-  }
-  .agzh-pill:hover,
-  .agzh-pill[data-open="true"] {
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(37, 99, 235, 0.45);
-  }
+.agzh-pill[data-mode="floating"] {
+  padding: 3px 9px;
+  height: auto;
+  border-radius: 999px;
+  background: var(--agzh-pill-bg);
+  border: 1px solid var(--agzh-pill-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 .agzh-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: #34d399;
   flex-shrink: 0;
@@ -107,20 +217,24 @@ style.textContent = `
 .agzh-pill[data-level="warn"] .agzh-dot { background: #fbbf24; }
 .agzh-pill[data-level="danger"] .agzh-dot { background: #f87171; }
 .agzh-pill[data-level="muted"] .agzh-dot { background: #9ca3af; }
-.agzh-sep { opacity: 0.45; }
-
+.agzh-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .agzh-card {
   position: fixed;
   margin: 0;
   padding: 10px 12px;
   width: 288px;
   border-radius: 10px;
+  font-family: var(--agzh-font);
   font-size: 11.5px;
   line-height: 1.45;
-  color: rgba(235, 238, 245, 0.95);
-  background: rgba(22, 25, 33, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  color: var(--agzh-card-fg);
+  background: var(--agzh-card-bg);
+  border: 1px solid var(--agzh-card-border);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   display: none;
@@ -128,13 +242,8 @@ style.textContent = `
   pointer-events: auto;
 }
 .agzh-card[data-visible="true"] { display: block; }
-@media (prefers-color-scheme: light) {
-  .agzh-card {
-    color: rgba(20, 24, 34, 0.94);
-    background: rgba(255, 255, 255, 0.98);
-    border-color: rgba(15, 23, 42, 0.14);
-    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
-  }
+:host([data-theme="light"]) .agzh-card {
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
 }
 .agzh-head {
   display: flex;
@@ -242,22 +351,74 @@ function findAnchor() {
     return null;
 }
 
+function findToolbarGap(target, ar) {
+    if (!target || typeof target.querySelectorAll !== 'function') return null;
+    const raw = [];
+    const nodes = target.querySelectorAll('button, [role="button"], [aria-haspopup]');
+    for (const el of nodes) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 12 || r.height < 14 || r.height > 46) continue;
+        if (r.width >= ar.width * 0.65) continue;
+        if (r.bottom < ar.bottom - 52 || r.top < ar.bottom - 56 || r.bottom > ar.bottom + 2) continue;
+        raw.push({ el, left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    }
+    if (raw.length < 2) return null;
+
+    // 过滤被外层按钮包含的子元素
+    const items = raw.filter((a, i) => !raw.some((b, j) => (
+        i !== j &&
+        b.left <= a.left + 1 &&
+        b.right >= a.right - 1 &&
+        b.top <= a.top + 1 &&
+        b.bottom >= a.bottom - 1 &&
+        (b.right - b.left) * (b.bottom - b.top) > (a.right - a.left) * (a.bottom - a.top)
+    )));
+    if (items.length < 2) return null;
+
+    items.sort((a, b) => a.left - b.left);
+    let bestIdx = -1;
+    let maxGap = 0;
+    for (let i = 0; i < items.length - 1; i++) {
+        const gap = items[i + 1].left - items[i].right;
+        if (gap > maxGap) {
+            maxGap = gap;
+            bestIdx = i;
+        }
+    }
+    if (bestIdx < 0 || maxGap < 100) return null;
+
+    const leftItem = items[bestIdx];
+    const rightItem = items[bestIdx + 1];
+    return {
+        leftEl: leftItem.el,
+        rightEl: rightItem.el,
+        leftEdge: leftItem.right,
+        rightEdge: rightItem.left,
+        centerY: (leftItem.top + leftItem.bottom) / 2,
+        gap: maxGap,
+    };
+}
+
+function observeTargets(nextAnchor, nextLeft, nextRight) {
+    if (nextAnchor === anchor && nextLeft === observedLeft && nextRight === observedRight) return;
+    anchor = nextAnchor;
+    observedLeft = nextLeft;
+    observedRight = nextRight;
+    if (typeof ResizeObserver !== 'function') return;
+    if (!resizeObserver) resizeObserver = new ResizeObserver(() => schedulePosition());
+    try { resizeObserver.disconnect(); } catch {}
+    if (anchor) try { resizeObserver.observe(anchor); } catch {}
+    if (observedLeft) try { resizeObserver.observe(observedLeft); } catch {}
+    if (observedRight) try { resizeObserver.observe(observedRight); } catch {}
+}
+
 function ensureAnchor() {
     if (anchor && anchor.isConnected) {
         const r = anchor.getBoundingClientRect();
         if (r.width > 0 && r.height > 0) return anchor;
     }
     const next = findAnchor();
-    if (next !== anchor) {
-        if (resizeObserver) {
-            try { resizeObserver.disconnect(); } catch {}
-        }
-        anchor = next;
-        if (anchor && typeof ResizeObserver === 'function') {
-            resizeObserver = new ResizeObserver(() => schedulePosition());
-            resizeObserver.observe(anchor);
-        }
-    }
+    observeTargets(next, null, null);
     return anchor;
 }
 
@@ -282,14 +443,39 @@ function updatePosition() {
         return;
     }
 
-    const rightPx = Math.max(8, Math.round(window.innerWidth - r.right + 2));
-    const preferredBottom = Math.round(window.innerHeight - r.top + 6);
-    const maxBottom = Math.max(8, window.innerHeight - 32);
-    const bottomPx = Math.max(8, Math.min(preferredBottom, maxBottom));
+    const gapInfo = findToolbarGap(target, r);
+    observeTargets(target, gapInfo ? gapInfo.leftEl : null, gapInfo ? gapInfo.rightEl : null);
+
+    const theme = detectTheme(target, gapInfo ? gapInfo.leftEl : null);
+    host.setAttribute('data-theme', theme.dark ? 'dark' : 'light');
+    host.style.setProperty('--agzh-font', resolveFontStack(target, gapInfo ? gapInfo.leftEl : null));
+    host.style.setProperty('--agzh-fg', theme.fg);
+    host.style.setProperty('--agzh-fg-hover', theme.fgHover);
+    host.style.setProperty('--agzh-divider', theme.divider);
 
     host.style.display = 'block';
-    host.style.right = `${rightPx}px`;
-    host.style.bottom = `${bottomPx}px`;
+    if (gapInfo) {
+        pill.setAttribute('data-mode', 'inline');
+        const leftPx = Math.round(gapInfo.leftEdge + 10);
+        const maxWidthPx = Math.max(80, Math.floor(gapInfo.rightEdge - leftPx - 10));
+        const topPx = Math.max(4, Math.round(gapInfo.centerY - 11));
+        host.style.left = `${leftPx}px`;
+        host.style.top = `${topPx}px`;
+        host.style.right = 'auto';
+        host.style.bottom = 'auto';
+        host.style.maxWidth = `${maxWidthPx}px`;
+    } else {
+        pill.setAttribute('data-mode', 'floating');
+        const rightPx = Math.max(8, Math.round(window.innerWidth - r.right + 2));
+        const preferredBottom = Math.round(window.innerHeight - r.top + 6);
+        const maxBottom = Math.max(8, window.innerHeight - 32);
+        const bottomPx = Math.max(8, Math.min(preferredBottom, maxBottom));
+        host.style.left = 'auto';
+        host.style.top = 'auto';
+        host.style.right = `${rightPx}px`;
+        host.style.bottom = `${bottomPx}px`;
+        host.style.maxWidth = `${Math.max(120, Math.round(r.width - 16))}px`;
+    }
 
     if (card.getAttribute('data-visible') === 'true') {
         positionCard();
@@ -307,7 +493,7 @@ function positionCard() {
     const cardW = 288;
     const estH = card.offsetHeight || 230;
     const gap = 8;
-    let left = pr.right - cardW;
+    let left = pr.left;
     left = Math.max(8, Math.min(left, window.innerWidth - cardW - 8));
     let top = pr.top - estH - gap;
     if (top < 8) {
@@ -387,37 +573,38 @@ function renderPill() {
 
     if (!snapshot || snapshot.status === 'waiting') {
         pill.setAttribute('data-level', 'muted');
-        pill.appendChild(makeSpan('遥测 · 等待首轮响应'));
+        pill.appendChild(makeSpan('遥测 · 等待首轮响应', 'agzh-text'));
         return;
     }
     if (snapshot.status === 'unavailable') {
         pill.setAttribute('data-level', 'muted');
-        pill.appendChild(makeSpan('遥测 · SQLite 不可用'));
+        pill.appendChild(makeSpan('遥测 · SQLite 不可用', 'agzh-text'));
         return;
     }
     if (snapshot.status === 'incompatible') {
         pill.setAttribute('data-level', 'warn');
-        pill.appendChild(makeSpan('遥测 · 数据结构不兼容'));
+        pill.appendChild(makeSpan('遥测 · 协议不兼容', 'agzh-text'));
         return;
     }
 
     const level = ctxLevel(snapshot.contextPct);
     pill.setAttribute('data-level', level);
 
-    const ctxText = snapshot.contextLimit
-        ? `上下文 ${fmtNum(snapshot.contextUsed)}/${fmtNum(snapshot.contextLimit)} (${Math.round(snapshot.contextPct || 0)}%)`
-        : '上下文 —';
-    pill.appendChild(makeSpan(ctxText));
-
+    const parts = [];
     const lc = snapshot.lastCall;
     if (lc && lc.tokPerSec !== null) {
-        pill.appendChild(makeSpan('·', 'agzh-sep'));
-        pill.appendChild(makeSpan(fmtRate(lc.tokPerSec)));
+        parts.push(fmtRate(lc.tokPerSec));
+    }
+    if (lc && lc.ttftMs !== null) {
+        parts.push(`TTFT ${fmtMs(lc.ttftMs)}`);
+    }
+    if (snapshot.contextLimit) {
+        parts.push(`上下文 ${fmtNum(snapshot.contextUsed)}/${fmtNum(snapshot.contextLimit)} (${Math.round(snapshot.contextPct || 0)}%)`);
     }
     if (lc && lc.cacheHitRate !== null) {
-        pill.appendChild(makeSpan('·', 'agzh-sep'));
-        pill.appendChild(makeSpan(`缓存 ${fmtPct(lc.cacheHitRate)}`));
+        parts.push(`缓存 ${fmtPct(lc.cacheHitRate)}`);
     }
+    pill.appendChild(makeSpan(parts.length ? parts.join(' · ') : '遥测就绪', 'agzh-text'));
 }
 
 function renderCard() {
@@ -453,7 +640,6 @@ function renderCard() {
         return;
     }
 
-    // 1. 上下文水位
     const ctxSec = document.createElement('div');
     ctxSec.className = 'agzh-section';
     ctxSec.appendChild(makeSpan('上下文压缩水位', 'agzh-sec-label'));
@@ -473,7 +659,6 @@ function renderCard() {
     }
     card.appendChild(ctxSec);
 
-    // 2. 本轮生成
     const lc = snapshot.lastCall;
     if (lc) {
         const turnSec = document.createElement('div');
@@ -488,7 +673,6 @@ function renderCard() {
         card.appendChild(turnSec);
     }
 
-    // 3. 会话累计
     const ses = snapshot.session;
     if (ses && ses.calls > 0) {
         const sesSec = document.createElement('div');
@@ -538,6 +722,7 @@ const onPillClick = (e) => {
     else hideCard();
 };
 const onDocClick = (e) => {
+    schedulePosition();
     if (!pinned) return;
     if (e.composedPath && e.composedPath().includes(host)) return;
     hideCard();
