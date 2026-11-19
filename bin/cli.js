@@ -172,9 +172,6 @@ async function status() {
     const config = loadConfig();
     const lStatus = launcher.launcherStatus();
     console.log(`[启动器] ${lStatus.installed ? `已构建 (${paths.tilde(lStatus.path)})` : '未构建（默认 CLI 启动；可运行 node bin/cli.js launcher 构建）'}`);
-    if (lStatus.legacyExists) {
-        console.log(`[提示] 检测到旧版启动器 ${paths.tilde(paths.LEGACY_LAUNCHER_APP)}，可运行 node bin/cli.js launcher remove 清理`);
-    }
     const agent = service.status();
     console.log(`[服务] ${!agent.loaded ? (config.engine === 'hook' ? '未安装（纯 Hook 模式无需常驻）' : '未安装') : agent.pid ? `运行中 (pid ${agent.pid})` : '已加载，未运行'}`);
 
