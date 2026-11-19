@@ -10,6 +10,7 @@ const service = require('../lib/service');
 const launcher = require('../lib/launcher');
 const app = require('../lib/app');
 const { runDaemon, runOnce, probe } = require('../lib/daemon');
+const { isSqliteAvailable } = require('../lib/metrics');
 const i18n = require('../lib/i18n');
 
 const HELP = `
@@ -21,8 +22,10 @@ Antigravity 简体中文汉化（双引擎零侵入注入，不修改官方应�
   install            部署运行时与降级守护进程（默认通过 launch 命令启动）
   launch             通过 CLI 启动 Antigravity（Hook 优先，不可用时自动降级 CDP）
   launcher [remove]  单独编译原生 Swift 启动器 ${paths.tilde(paths.LAUNCHER_APP)}（remove 移除）
-  uninstall          移除守护进程与启动器，恢复英文界面
-  status             查看应用签名、Fuse、启动器、引擎与窗口状态
+  plugin [remove]    安装或移除配套 Antigravity 插件（侧边中文控制面板）
+  metrics [on|off]   一键开启或关闭实时遥测胶囊（默认关闭，热更新生效）
+  uninstall          移除守护进程、启动器与配套插件，恢复英文界面
+  status             查看应用签名、Fuse、启动器、遥测、插件与窗口状态
   daemon             前台运行事件驱动守护进程（供 LaunchAgent 调用）
 
 词条维护（见 AGENTS.md）:
@@ -35,6 +38,7 @@ Antigravity 简体中文汉化（双引擎零侵入注入，不修改官方应�
   --font <名称>         字体，默认 JKaiMono，none 表示不注入
   --brand-title <模式>  ${BRAND_TITLE_MODES.join(' | ')}
   --engine <模式>       注入引擎：${ENGINES.join(' | ')}（默认 auto）
+  --metrics / --no-metrics  开启或关闭实时遥测胶囊
   --restart             launch 时若应用正在英文模式下运行，先退出再重启
   --bundle <文件>       i18n extract 使用本地前端 bundle，不连接应用
   --json                i18n check / missing 输出 JSON
@@ -62,7 +66,7 @@ function printApp() {
     return info;
 }
 
-async function install({ font, brandTitle, engine }) {
+async function install({ font, brandTitle, engine, metrics }) {
     const info = printApp();
     const current = loadConfig();
     const targetEngine = engine || current.engine;
@@ -71,11 +75,12 @@ async function install({ font, brandTitle, engine }) {
         enabled: true,
         ...(font && { font }),
         ...(brandTitle && { brandTitle }),
-        ...(engine && { engine })
+        ...(engine && { engine }),
+        ...(typeof metrics === 'boolean' && { metrics })
     });
     const { entries } = buildBundle(config);
     service.install(process.execPath, { engine: config.engine });
-    console.log(`[配置] 字体=${config.font} 品牌标题=${config.brandTitle} 引擎=${config.engine}（当前生效=${resolved}）词条=${entries}`);
+    console.log(`[配置] 字体=${config.font} 品牌标题=${config.brandTitle} 引擎=${config.engine}（当前生效=${resolved}）遥测=${config.metrics ? '开启' : '关闭'} 词条=${entries}`);
     if (config.engine !== 'hook') console.log(`[服务] ${paths.tilde(paths.AGENT_PLIST)}`);
     console.log(`[日志] ${paths.tilde(paths.LOG_FILE)}`);
 
@@ -152,10 +157,46 @@ async function buildLauncherCmd(_options, sub = 'build') {
     console.log('[完成] 现在可直接双击或在启动台/Spotlight 中打开 Antigravity-zh.app');
 }
 
+async function pluginCmd(_options, sub = 'install') {
+    if (sub === 'remove' || sub === 'uninstall') {
+        fs.rmSync(paths.PLUGIN_DIR, { recursive: true, force: true });
+        console.log(`[插件] 已移除 ${paths.tilde(paths.PLUGIN_DIR)}`);
+        return;
+    }
+    if (sub !== 'install') {
+        throw new Error(`未知子命令 plugin ${sub}，可用: install | remove`);
+    }
+    const repoPlugin = path.join(paths.ROOT_DIR, 'plugin');
+    const deployedPlugin = path.join(paths.RUNTIME_DIR, 'plugin');
+    const src = fs.existsSync(repoPlugin) ? repoPlugin : deployedPlugin;
+    if (!fs.existsSync(src)) {
+        throw new Error(`未找到插件源码目录: ${src}`);
+    }
+    fs.mkdirSync(path.dirname(paths.PLUGIN_DIR), { recursive: true });
+    fs.rmSync(paths.PLUGIN_DIR, { recursive: true, force: true });
+    fs.cpSync(src, paths.PLUGIN_DIR, { recursive: true });
+    console.log(`[插件] 已安装至 ${paths.tilde(paths.PLUGIN_DIR)}（可在 Antigravity 插件管理中启用控制面板）`);
+}
+
+async function metricsCmd(options, sub) {
+    let next;
+    if (sub === 'on' || sub === 'enable' || sub === 'true') next = true;
+    else if (sub === 'off' || sub === 'disable' || sub === 'false') next = false;
+    else if (typeof options.metrics === 'boolean') next = options.metrics;
+    else {
+        const cur = loadConfig();
+        console.log(`[遥测] 当前=${cur.metrics ? '开启' : '关闭'}（node:sqlite ${isSqliteAvailable() ? '可用' : '不可用'}）`);
+        console.log('[提示] 使用 node bin/cli.js metrics on | off 切换');
+        return;
+    }
+    const config = saveConfig({ metrics: next });
+    console.log(`[遥测] 已设为 ${config.metrics ? '开启' : '关闭'}（运行中窗口将在数百毫秒内热更新，不重注汉化）`);
+}
+
 async function uninstall() {
     const hookState = app.readHookState();
     if (hookState) {
-        saveConfig({ enabled: false });
+        saveConfig({ enabled: false, metrics: false });
         await new Promise((r) => setTimeout(r, 500));
     }
     service.uninstall();
@@ -164,7 +205,7 @@ async function uninstall() {
     const extras = [];
     if (hookState) extras.push('已还原活跃 Hook 窗口与原生菜单');
     if (cdpCount) extras.push(`停止 ${cdpCount} 个 CDP 窗口的汉化`);
-    console.log(`[完成] 已移除守护进程与启动器${extras.length ? `（${extras.join('，')}）` : ''}`);
+    console.log(`[完成] 已移除守护进程、启动器与配套插件${extras.length ? `（${extras.join('，')}）` : ''}`);
 }
 
 async function status() {
@@ -172,6 +213,9 @@ async function status() {
     const config = loadConfig();
     const lStatus = launcher.launcherStatus();
     console.log(`[启动器] ${lStatus.installed ? `已构建 (${paths.tilde(lStatus.path)})` : '未构建（默认 CLI 启动；可运行 node bin/cli.js launcher 构建）'}`);
+    console.log(`[遥测] ${config.metrics ? '开启' : '关闭'}（node:sqlite ${isSqliteAvailable() ? '可用' : '不可用'}）`);
+    const pluginInstalled = fs.existsSync(paths.PLUGIN_DIR);
+    console.log(`[插件] ${pluginInstalled ? `已安装 (${paths.tilde(paths.PLUGIN_DIR)})` : '未安装（可运行 node bin/cli.js plugin 安装）'}`);
     const agent = service.status();
     console.log(`[服务] ${!agent.loaded ? (config.engine === 'hook' ? '未安装（纯 Hook 模式无需常驻）' : '未安装') : agent.pid ? `运行中 (pid ${agent.pid})` : '已加载，未运行'}`);
 
@@ -210,6 +254,8 @@ const COMMANDS = {
     install,
     launch,
     launcher: buildLauncherCmd,
+    plugin: pluginCmd,
+    metrics: metricsCmd,
     uninstall,
     status,
     daemon: runDaemon,
@@ -219,10 +265,12 @@ const COMMANDS = {
 async function main() {
     const { positionals, values } = parseArgs({
         allowPositionals: true,
+        allowNegative: true,
         options: {
             font: { type: 'string' },
             'brand-title': { type: 'string' },
             engine: { type: 'string' },
+            metrics: { type: 'boolean' },
             restart: { type: 'boolean' },
             bundle: { type: 'string' },
             json: { type: 'boolean' },
@@ -240,6 +288,7 @@ async function main() {
         json: values.json,
         restart: values.restart
     };
+    if (typeof values.metrics === 'boolean') options.metrics = values.metrics;
     if (values.font) options.font = values.font;
     if (values['brand-title']) {
         if (!BRAND_TITLE_MODES.includes(values['brand-title'])) throw new Error(`--brand-title 仅支持 ${BRAND_TITLE_MODES.join(' | ')}`);

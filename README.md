@@ -12,6 +12,8 @@ Antigravity 简体中文本地化与字体增强工具。
 - **独立原生启动器（可选）**：运行 `node bin/cli.js launcher` 可用原生 Swift 编译生成 `~/Applications/Antigravity-zh.app`（复用官方图标，零 Node.js 运行时依赖，不留双 Dock 图标），构建后也可直接通过启动台、Spotlight 或 Dock 点击启动。
 - **热更新**：配置与自定义词条保存后数秒生效，无需重启应用。
 - **精准隔离**：代码编辑器、终端、对话正文与文件路径保持原样。
+- **实时遥测胶囊（可选，默认关闭）**：通过 `metrics on` 或 Sidecar 面板一键开启，在输入框旁悬浮展示本轮与累计上下文水位线、端到端/纯流式速率、TTFT、思考与正文拆分、缓存命中率；与汉化载荷完全解耦，开关不触发界面重注闪烁。
+- **配套 Sidecar 控制面板（可选）**：运行 `node bin/cli.js plugin` 安装侧边辅助面板，可在 Antigravity 内直接查看状态/日志、开关汉化与遥测、调整字体/品牌模式并编辑用户覆盖词条。
 - **字体覆盖与保护**：默认 [JKaiMono](https://github.com/onenora/JKaiMono)，覆盖 UI、编辑器与终端并保护图标字体；字体未安装时保持系统字体。
 
 ---
@@ -43,10 +45,14 @@ node bin/cli.js launch
 node bin/cli.js launcher
 # 构建后点击该 .app 亦可启动汉化版；移除启动器：node bin/cli.js launcher remove
 
-# 6. 查看服务、Fuse、启动器、引擎与窗口状态
+# 6. （可选）开启实时遥测胶囊 / 安装配套侧边控制面板插件
+node bin/cli.js metrics on
+node bin/cli.js plugin
+
+# 7. 查看服务、Fuse、启动器、遥测、插件与窗口状态
 node bin/cli.js status
 
-# 7. 卸载，恢复官方英文界面
+# 8. 卸载，恢复官方英文界面
 node bin/cli.js uninstall
 ```
 
@@ -67,6 +73,7 @@ npm run remove    # 卸载
 | `--font <字体名>` | `JKaiMono` | 自定义字体；`none` 禁用字体注入 |
 | `--brand-title <模式>` | `english` | 品牌名：`english`（保持英文）/ `hidden`（隐藏）/ `translated`（翻译） |
 | `--engine <模式>` | `auto` | 引擎：`auto`（Hook 优先，自动降级）/ `hook`（仅主进程 Hook）/ `cdp`（仅事件驱动 CDP） |
+| `--metrics` / `--no-metrics` | `false` | 开启或关闭实时遥测胶囊（亦可运行 `metrics on\|off`） |
 | `--restart` | `false` | `launch` 时若应用正以英文运行，先退出再重启 |
 | `-h`, `--help` | - | 查看命令行帮助 |
 
@@ -75,7 +82,8 @@ npm run remove    # 卸载
 | 路径 | 说明 |
 | :--- | :--- |
 | `~/Applications/Antigravity-zh.app` | 原生 Swift 启动器（可选，由 `launcher` 命令单独构建） |
-| `~/.antigravity-zh/config.json` | 配置；`"enabled": false` 暂停汉化 |
+| `~/.gemini/config/plugins/antigravity-zh/` | 配套 Antigravity 侧边控制面板插件（由 `plugin` 命令安装） |
+| `~/.antigravity-zh/config.json` | 配置；`"enabled": false` 暂停汉化，`"metrics": true` 开启遥测胶囊 |
 | `~/.antigravity-zh/messages.json` | 自定义词条，优先级最高，如 `{ "Settings": "偏好设置" }` |
 | `~/Library/Logs/antigravity-zh.log` | 运行日志（超过 1 MB 自动轮转截断） |
 
@@ -97,8 +105,11 @@ antigravity-zh/
 │   ├── bundle.js       # 注入载荷构建
 │   ├── cdp.js          # Browser-level CDP（autoAttach）与目标发现
 │   ├── log.js          # 日志轮转写入
+│   ├── metrics/        # 遥测解码、会话指标计算与 SQLite WAL 增量监听
 │   └── i18n/           # 词库工具（原文提取、校验整理）
-├── runtime/            # 注入引擎（main-hook、translator、i18n、font）
+├── plugin/             # 配套 Antigravity 插件与 Sidecar 控制面板
+├── runtime/            # 注入引擎（main-hook、translator、i18n、font、metrics）
+├── .agents/skills/     # 仓库级词库维护 Skill
 └── locale/             # 简体中文词库、原生菜单词表、术语表
 ```
 

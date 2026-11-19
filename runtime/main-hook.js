@@ -44,9 +44,10 @@ globalThis.__agzhMainHooked = true;
 
 const paths = require('../lib/paths');
 const { loadConfig } = require('../lib/config');
-const { buildBundle, sourcesSignature } = require('../lib/bundle');
+const { buildBundle, buildMetricsBundle, buildMetricsUpdateScript, sourcesSignature } = require('../lib/bundle');
 const { loadNativeMessages } = require('../lib/i18n/store');
 const { appendLog } = require('../lib/log');
+const { MetricsSource, extractCascadeId, createSessionState, toSnapshot } = require('../lib/metrics');
 const { createTranslator } = require('./translator');
 
 const APP_URL_RE = /^https:\/\/127\.0\.0\.1:\d+\//;
@@ -57,11 +58,14 @@ const startedAt = new Date().toISOString();
 const state = {
     config: null,
     bundle: null,
+    metricsBundle: null,
     sig: '',
     nativeTranslator: null
 };
 
 const appContents = new Set();
+const wcCascadeIds = new WeakMap();
+let metricsSource = null;
 const watchers = [];
 const patchedModules = new WeakMap();
 const hookedApps = new WeakSet();
@@ -86,18 +90,79 @@ function logHook(msg) {
 
 function refreshBundleState() {
     const sig = sourcesSignature();
-    if (state.bundle && sig === state.sig) return false;
+    if (state.bundle && sig === state.sig) return null;
+    const prevBundleVersion = state.bundle ? state.bundle.version : null;
+    const prevEnabled = state.config ? Boolean(state.config.enabled) : null;
+    const prevMetricsVersion = state.metricsBundle ? state.metricsBundle.version : null;
+    const prevMetricsEnabled = state.config ? Boolean(state.config.metrics) : null;
+
     state.sig = sig;
     state.config = loadConfig();
     state.bundle = buildBundle(state.config);
+    state.metricsBundle = buildMetricsBundle(state.config);
     state.nativeTranslator = state.config.enabled
         ? createTranslator(loadNativeMessages({ brandTitle: state.config.brandTitle }))
         : null;
-    return true;
+
+    return {
+        i18nChanged: prevBundleVersion !== state.bundle.version || prevEnabled !== Boolean(state.config.enabled),
+        metricsChanged: prevMetricsVersion !== state.metricsBundle.version || prevMetricsEnabled !== Boolean(state.config.metrics)
+    };
+}
+
+function pushMetricsToWindows(cascadeId, snapshot) {
+    if (!cascadeId || !snapshot) return;
+    const expr = buildMetricsUpdateScript(snapshot);
+    for (const wc of [...appContents]) {
+        try {
+            if (wc.isDestroyed()) { appContents.delete(wc); continue; }
+            if (wcCascadeIds.get(wc) === cascadeId) {
+                void Promise.resolve(wc.executeJavaScript(expr, true)).catch(() => {});
+            }
+        } catch {}
+    }
+}
+
+function getTrackedCascadeIds() {
+    const ids = new Set();
+    for (const wc of appContents) {
+        try {
+            if (wc.isDestroyed()) continue;
+            const cid = wcCascadeIds.get(wc);
+            if (cid) ids.add(cid);
+        } catch {}
+    }
+    return ids;
+}
+
+function getMetricsSnapshotForCascade(cascadeId) {
+    if (!cascadeId) return toSnapshot(createSessionState(), { status: 'waiting' });
+    if (!metricsSource) return null;
+    return metricsSource.getCachedSnapshot(cascadeId) || metricsSource.refresh(cascadeId);
+}
+
+function syncMetricsSource() {
+    const enabled = Boolean(state.config && state.config.metrics);
+    if (!enabled) {
+        if (metricsSource) {
+            metricsSource.stop();
+            metricsSource = null;
+        }
+        return;
+    }
+    if (!metricsSource) {
+        metricsSource = new MetricsSource({
+            onSnapshot: (cid, snap) => pushMetricsToWindows(cid, snap),
+            log: logHook,
+        });
+        metricsSource.start();
+    }
+    metricsSource.setTrackedIds(getTrackedCascadeIds());
 }
 
 refreshBundleState();
-logHook(`主进程 Hook 已加载 v${state.bundle.version} (enabled=${state.config.enabled})`);
+syncMetricsSource();
+logHook(`主进程 Hook 已加载 v${state.bundle.version} (enabled=${state.config.enabled}, metrics=${Boolean(state.config.metrics)})`);
 
 // 临时 --inspect-brk 端口仅用于首毫秒注入，延迟关闭以确保主进程已安全恢复执行
 const closeInspectorTimer = setTimeout(() => {
@@ -136,6 +201,7 @@ function writeRuntimeState() {
             pid: process.pid,
             version: state.bundle ? state.bundle.version : null,
             enabled: Boolean(state.config && state.config.enabled),
+            metrics: Boolean(state.config && state.config.metrics),
             startedAt,
             windows
         }, null, 2) + '\n');
@@ -299,20 +365,48 @@ function injectSubFrames(wc, expr) {
     }
 }
 
+function injectMetricsToWebContents(wc, cascadeId) {
+    if (!state.config || !state.config.metrics) return;
+    if (!state.metricsBundle || !state.metricsBundle.source) return;
+    const snap = getMetricsSnapshotForCascade(cascadeId);
+    const p = Promise.resolve(wc.executeJavaScript(state.metricsBundle.source, true));
+    if (snap) {
+        void p.then(() => {
+            if (!wc.isDestroyed()) {
+                return wc.executeJavaScript(buildMetricsUpdateScript(snap), true);
+            }
+        }).catch(() => {});
+    } else {
+        void p.catch(() => {});
+    }
+}
+
 function injectWebContents(wc) {
     try {
         if (!wc || wc.isDestroyed()) return;
         const url = wc.getURL();
         if (!APP_URL_RE.test(url)) {
-            if (appContents.delete(wc)) writeRuntimeState();
+            if (appContents.delete(wc)) {
+                if (metricsSource) metricsSource.setTrackedIds(getTrackedCascadeIds());
+                writeRuntimeState();
+            }
             return;
         }
         const isNew = !appContents.has(wc);
+        const prevCid = wcCascadeIds.get(wc) || null;
+        const cascadeId = extractCascadeId(url);
         appContents.add(wc);
+        wcCascadeIds.set(wc, cascadeId);
+
         if (state.config && state.config.enabled && state.bundle && state.bundle.source) {
             void Promise.resolve(wc.executeJavaScript(state.bundle.source, true)).catch(() => {});
             injectSubFrames(wc, state.bundle.source);
             if (isNew) logHook(`已注入主窗口 ${url}`);
+        }
+        if (state.config && state.config.metrics) {
+            if (!metricsSource) syncMetricsSource();
+            else if (isNew || prevCid !== cascadeId) metricsSource.setTrackedIds(getTrackedCascadeIds());
+            injectMetricsToWebContents(wc, cascadeId);
         }
         writeRuntimeState();
     } catch {}
@@ -332,7 +426,11 @@ function attachWebContents(wc, injectNow = false) {
         } catch {}
     });
     wc.on('destroyed', () => {
-        if (appContents.delete(wc)) writeRuntimeState();
+        wcCascadeIds.delete(wc);
+        if (appContents.delete(wc)) {
+            if (metricsSource) metricsSource.setTrackedIds(getTrackedCascadeIds());
+            writeRuntimeState();
+        }
     });
     if (injectNow && typeof wc.getURL === 'function' && APP_URL_RE.test(wc.getURL())) {
         injectWebContents(wc);
@@ -341,44 +439,67 @@ function attachWebContents(wc, injectNow = false) {
 
 function reloadAll() {
     try {
-        if (!refreshBundleState()) return;
-        logHook(`热更新载荷 v${state.bundle.version} (enabled=${state.config.enabled})`);
+        const diff = refreshBundleState();
+        if (!diff) return;
+        const { i18nChanged, metricsChanged } = diff;
+        if (!i18nChanged && !metricsChanged) return;
+
         const enable = Boolean(state.config.enabled);
+        const enableMetrics = Boolean(state.config.metrics);
 
-        for (const wc of [...appContents]) {
-            try {
-                if (wc.isDestroyed()) { appContents.delete(wc); continue; }
-                if (!APP_URL_RE.test(wc.getURL())) continue;
-                const expr = enable ? state.bundle.source : 'window.__agzh && window.__agzh.teardown()';
-                if (expr) {
-                    void Promise.resolve(wc.executeJavaScript(expr, true)).catch(() => {});
-                    injectSubFrames(wc, expr);
-                }
-            } catch {}
+        if (i18nChanged) {
+            logHook(`热更新载荷 v${state.bundle.version} (enabled=${enable})`);
+            for (const wc of [...appContents]) {
+                try {
+                    if (wc.isDestroyed()) { appContents.delete(wc); continue; }
+                    if (!APP_URL_RE.test(wc.getURL())) continue;
+                    const expr = enable ? state.bundle.source : 'window.__agzh && window.__agzh.teardown()';
+                    if (expr) {
+                        void Promise.resolve(wc.executeJavaScript(expr, true)).catch(() => {});
+                        injectSubFrames(wc, expr);
+                    }
+                } catch {}
+            }
+
+            if (appMenuRef && electronApis && electronApis.origSetApplicationMenu) {
+                try {
+                    applyMenuTranslation(appMenuRef, enable);
+                    electronApis.origSetApplicationMenu.call(electronApis.RealMenu, appMenuRef);
+                } catch {}
+            }
+
+            if (dockMenuRef && dockTargetRef && electronApis && electronApis.origDockSetMenu) {
+                try {
+                    applyMenuTranslation(dockMenuRef, enable);
+                    electronApis.origDockSetMenu.call(dockTargetRef, dockMenuRef);
+                } catch {}
+            }
+
+            for (const entry of [...trackedTrays]) {
+                const tray = entry.trayRef.deref();
+                const menu = entry.menuRef.deref();
+                if (!tray || !menu) { trackedTrays.delete(entry); continue; }
+                try {
+                    applyMenuTranslation(menu, enable);
+                    electronApis.origTraySetContextMenu.call(tray, menu);
+                } catch {}
+            }
         }
 
-        if (appMenuRef && electronApis && electronApis.origSetApplicationMenu) {
-            try {
-                applyMenuTranslation(appMenuRef, enable);
-                electronApis.origSetApplicationMenu.call(electronApis.RealMenu, appMenuRef);
-            } catch {}
-        }
-
-        if (dockMenuRef && dockTargetRef && electronApis && electronApis.origDockSetMenu) {
-            try {
-                applyMenuTranslation(dockMenuRef, enable);
-                electronApis.origDockSetMenu.call(dockTargetRef, dockMenuRef);
-            } catch {}
-        }
-
-        for (const entry of [...trackedTrays]) {
-            const tray = entry.trayRef.deref();
-            const menu = entry.menuRef.deref();
-            if (!tray || !menu) { trackedTrays.delete(entry); continue; }
-            try {
-                applyMenuTranslation(menu, enable);
-                electronApis.origTraySetContextMenu.call(tray, menu);
-            } catch {}
+        if (metricsChanged) {
+            logHook(`热更新遥测胶囊 v${state.metricsBundle.version} (metrics=${enableMetrics})`);
+            syncMetricsSource();
+            for (const wc of [...appContents]) {
+                try {
+                    if (wc.isDestroyed()) { appContents.delete(wc); continue; }
+                    if (!APP_URL_RE.test(wc.getURL())) continue;
+                    if (enableMetrics) {
+                        injectMetricsToWebContents(wc, wcCascadeIds.get(wc) || extractCascadeId(wc.getURL()));
+                    } else {
+                        void Promise.resolve(wc.executeJavaScript('window.__agzhMetrics && window.__agzhMetrics.teardown()', true)).catch(() => {});
+                    }
+                } catch {}
+            }
         }
 
         writeRuntimeState();
@@ -407,6 +528,10 @@ function startWatchers() {
 
 function cleanupRuntime() {
     clearTimeout(reloadTimer);
+    if (metricsSource) {
+        metricsSource.stop();
+        metricsSource = null;
+    }
     while (watchers.length) {
         try { watchers.pop().close(); } catch {}
     }

@@ -77,12 +77,16 @@ node bin/cli.js i18n check      # 校验，存在 error 时退出码为 1
 runtime/translator.js   匹配引擎（纯函数，倒排索引 + LRU 缓存，浏览器与 Node 共用）
 runtime/i18n.js         DOM 层：文本 / 属性 / 富文本分组、MutationObserver、shadow root
 runtime/font.js         字体样式
+runtime/metrics.js      实时遥测胶囊与悬停遥测详情卡（Shadow DOM + popover="manual"）
 runtime/main-hook.js    主引擎：Electron 主进程 Hook（零闪烁注入 + 原生菜单/托盘/弹窗汉化 + 热更新）
+lib/metrics/            decode（Protobuf 增量解码）· compute（会话统计）· source（SQLite WAL 监听）
 lib/i18n/               extract（bundle 文本提取）· catalog（清单生成）· check（校验整理）· store（读写）
-lib/bundle.js           注入载荷 = 词条 + translator + i18n + 字体
+lib/bundle.js           注入载荷构建（buildBundle 汉化与 buildMetricsBundle 遥测胶囊解耦）
 lib/cdp.js              降级引擎：单连接 Browser-level CDP（autoAttach）与目标发现
 lib/daemon.js           事件驱动后台守护进程（fs.watch + 兜底巡检，纯 CDP 降级用）
 lib/launcher.js         原生 Swift 启动器编译与打包（~/Applications/Antigravity-zh.app）
 launcher/main.swift     原生 Swift 启动器源码（零运行时 Node 依赖）
+plugin/                 配套 Antigravity 控制面板 Sidecar 插件（安装至 ~/.gemini/config/plugins/antigravity-zh）
+.agents/skills/         仓库内词库维护 Skill
 lib/log.js              日志轮转写入
 ```
