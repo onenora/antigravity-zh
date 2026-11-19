@@ -21,10 +21,13 @@ function normalize(text) {
 }
 
 const PLACEHOLDER = /\{(#?)(\w+)\}/g;
+const WORD_RE = /[a-z]{2,}/g;
 const SHORTCUT = /^(.*\S)\s*\(((?:Ctrl|Cmd|Alt|Shift|Option|⌘|⌥|⇧|⌃)[^)]*)\)$/;
 const LISTS = [[', ', '，'], [' and ', '和']];
 const MAX_DEPTH = 2;
 const TRUNCATED_MIN = 30;
+const LONG_PREFIX = 8;
+const MAX_CACHE = 8192;
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const isPattern = (key) => /\{#?\w+\}/.test(key);
@@ -43,22 +46,79 @@ function compilePattern(key, value) {
     }
     source += escapeRe(key.slice(last));
     literal += key.slice(last);
+    const chunks = key.split(PLACEHOLDER).filter((_, i) => i % 3 === 0);
     // 最长字面片段用于快速预筛
-    const hint = key.split(PLACEHOLDER).filter((_, i) => i % 3 === 0).sort((a, b) => b.length - a.length)[0].toLowerCase();
-    return { key, re: new RegExp(`^${source}$`), loose: new RegExp(`^${source}$`, 'i'), captures, value, weight: literal.length, hint };
+    const hint = [...chunks].sort((a, b) => b.length - a.length)[0].toLowerCase();
+    // 提取不紧邻占位符的安全整词作为倒排桶锚点，避免 {var} 拼接后漏匹配
+    const safeWords = new Set();
+    for (let idx = 0; idx < chunks.length; idx++) {
+        const c = chunks[idx].toLowerCase();
+        for (const m of c.matchAll(WORD_RE)) {
+            if ((m.index > 0 || idx === 0) && (m.index + m[0].length < c.length || idx === chunks.length - 1)) {
+                safeWords.add(m[0]);
+            }
+        }
+    }
+    return {
+        key,
+        re: new RegExp(`^${source}$`),
+        loose: new RegExp(`^${source}$`, 'i'),
+        captures,
+        value,
+        weight: literal.length,
+        hint,
+        safeWords,
+        order: 0
+    };
 }
 
 function createTranslator(messages) {
     const exact = new Map();
     const lower = new Map();
     const patterns = [];
+    const longKeys = [];
+    const longByPrefix = new Map();
     for (const [key, value] of Object.entries(messages)) {
         exact.set(key, value);
         if (isPattern(key)) patterns.push(compilePattern(key, value));
         else if (key.includes(' ') && !lower.has(key.toLowerCase())) lower.set(key.toLowerCase(), key);
+        if (key.length > TRUNCATED_MIN) {
+            const entry = [key.toLowerCase(), key];
+            longKeys.push(entry);
+            const pref = entry[0].slice(0, LONG_PREFIX);
+            let bucket = longByPrefix.get(pref);
+            if (!bucket) { bucket = []; longByPrefix.set(pref, bucket); }
+            bucket.push(entry);
+        }
     }
     patterns.sort((a, b) => b.weight - a.weight);
-    const longKeys = [...exact.keys()].filter((k) => k.length > TRUNCATED_MIN).map((k) => [k.toLowerCase(), k]);
+
+    const df = new Map();
+    for (let i = 0; i < patterns.length; i++) {
+        patterns[i].order = i;
+        for (const w of patterns[i].safeWords) df.set(w, (df.get(w) || 0) + 1);
+    }
+    const byWord = new Map();
+    const alwaysPatterns = [];
+    for (const p of patterns) {
+        if (!p.safeWords.size) {
+            alwaysPatterns.push(p);
+            continue;
+        }
+        let best = null;
+        let bestDf = Infinity;
+        for (const w of p.safeWords) {
+            const count = df.get(w);
+            if (count < bestDf || (count === bestDf && (w.length > best.length || (w.length === best.length && w < best)))) {
+                best = w;
+                bestDf = count;
+            }
+        }
+        let bucket = byWord.get(best);
+        if (!bucket) { bucket = []; byWord.set(best, bucket); }
+        bucket.push(p);
+    }
+
     const cache = new Map();
 
     function fill(p, m, depth, skip) {
@@ -68,6 +128,39 @@ function createTranslator(messages) {
             const text = m[i + 1];
             return p.captures[i].numeric || depth >= MAX_DEPTH ? text : (resolve(text, depth + 1, skip) ?? text);
         });
+    }
+
+    function candidatePatterns(lc) {
+        const words = lc.match(WORD_RE);
+        if (!words) return alwaysPatterns;
+        let single = null;
+        let list = null;
+        let seen = null;
+        for (let i = 0; i < words.length; i++) {
+            const w = words[i];
+            if (seen) {
+                if (seen.has(w)) continue;
+                seen.add(w);
+            } else if (words.length > 1) {
+                seen = new Set([w]);
+            }
+            const bucket = byWord.get(w);
+            if (!bucket) continue;
+            if (!list && !single && !alwaysPatterns.length) {
+                single = bucket;
+            } else {
+                if (!list) {
+                    list = alwaysPatterns.length ? alwaysPatterns.slice() : [];
+                    if (single) { list.push(...single); single = null; }
+                }
+                for (let j = 0; j < bucket.length; j++) list.push(bucket[j]);
+            }
+        }
+        if (list) {
+            if (list.length > 1) list.sort((a, b) => a.order - b.order);
+            return list;
+        }
+        return single || alwaysPatterns;
     }
 
     /** skip：忽略该词条自身，用于判断词条是否已被其他规则覆盖 */
@@ -80,17 +173,20 @@ function createTranslator(messages) {
             if (k !== undefined && k !== skip) return exact.get(k);
         }
         // 模式区分大小写，容忍句首小写（如逗号列表中的 "ran 2 commands"）；多词文本再忽略大小写匹配一轮
-        const cap = s[0].toUpperCase() + s.slice(1);
-        for (const p of patterns) {
-            if (p.key === skip || !lc.includes(p.hint)) continue;
-            const m = p.re.exec(s) || (cap !== s && p.re.exec(cap));
-            if (m) return fill(p, m, depth, skip);
-        }
-        if (s.includes(' ')) {
-            for (const p of patterns) {
+        const candidates = candidatePatterns(lc);
+        if (candidates.length) {
+            const cap = s[0].toUpperCase() + s.slice(1);
+            for (const p of candidates) {
                 if (p.key === skip || !lc.includes(p.hint)) continue;
-                const m = p.loose.exec(s);
+                const m = p.re.exec(s) || (cap !== s && p.re.exec(cap));
                 if (m) return fill(p, m, depth, skip);
+            }
+            if (s.includes(' ')) {
+                for (const p of candidates) {
+                    if (p.key === skip || !lc.includes(p.hint)) continue;
+                    const m = p.loose.exec(s);
+                    if (m) return fill(p, m, depth, skip);
+                }
             }
         }
         if (depth >= MAX_DEPTH) return null;
@@ -111,7 +207,8 @@ function createTranslator(messages) {
         }
         if (s.endsWith('...') && s.length >= TRUNCATED_MIN + 3) {
             const prefix = lc.slice(0, -3).trim();
-            const hit = longKeys.find(([k]) => k.length > prefix.length && k.startsWith(prefix));
+            const pool = prefix.length >= LONG_PREFIX ? (longByPrefix.get(prefix.slice(0, LONG_PREFIX)) || []) : longKeys;
+            const hit = pool.find(([k]) => k.length > prefix.length && k.startsWith(prefix));
             if (hit && hit[1] !== skip) return exact.get(hit[1]);
         }
         return null;
@@ -121,8 +218,16 @@ function createTranslator(messages) {
     function translate(text) {
         const s = normalize(text);
         if (!s) return null;
-        if (!cache.has(s)) cache.set(s, resolve(s, 0));
-        return cache.get(s);
+        if (cache.has(s)) {
+            const v = cache.get(s);
+            cache.delete(s);
+            cache.set(s, v);
+            return v;
+        }
+        const v = resolve(s, 0);
+        if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value);
+        cache.set(s, v);
+        return v;
     }
 
     /** 不使用该词条本身时的译文（Node 端校验冗余用） */

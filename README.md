@@ -6,8 +6,10 @@ Antigravity 简体中文本地化与字体增强工具。
 
 ## 核心特性
 
-- **零侵入**：基于 Chrome DevTools Protocol 运行时注入，不修改 `Antigravity.app`，官方签名完整，应用内更新照常可用。
-- **开机即用**：后台服务随登录启动，新窗口、刷新、页面跳转自动汉化，注入丢失自动恢复。
+- **双引擎零侵入**：不修改 `Antigravity.app`，官方签名完整，应用内更新照常可用。
+  - **主引擎（主进程 Hook）**：启动时通过临时 `--inspect-brk` 一次性加载主进程 Hook 并随即关闭调试端口，运行期零开放端口、零首屏英文闪烁，支持原生菜单栏 / Dock / 托盘 / 对话框汉化，无需后台常驻轮询。
+  - **降级引擎（事件驱动 Browser CDP）**：当未来上游版本关闭 `EnableNodeCliInspectArguments` Fuse 时自动降级，单连接 `Target.setAutoAttach` + `fs.watch` 替代高频轮询。
+- **独立启动器**：安装时自动在 `~/Applications/` 生成 **Antigravity 中文版.app**（复用官方图标，不留双 Dock 图标），可直接从启动台、Spotlight 或 Dock 打开。
 - **热更新**：配置与自定义词条保存后数秒生效，无需重启应用。
 - **精准隔离**：代码编辑器、终端、对话正文与文件路径保持原样。
 - **字体覆盖与保护**：默认 [JKaiMono](https://github.com/onenora/JKaiMono)，覆盖 UI、编辑器与终端并保护图标字体；字体未安装时保持系统字体。
@@ -25,7 +27,7 @@ Antigravity 简体中文本地化与字体增强工具。
 ## 使用方法
 
 ```bash
-# 1. 安装简体中文汉化（默认字体 JKaiMono）
+# 1. 安装简体中文汉化（默认字体 JKaiMono，同时生成「Antigravity 中文版.app」）
 node bin/cli.js install
 
 # 2. 指定自定义字体（例如 JetBrains Mono）
@@ -34,10 +36,10 @@ node bin/cli.js install --font "JetBrains Mono"
 # 3. 纯净汉化（不注入字体）
 node bin/cli.js install --font none
 
-# 4. 启动 Antigravity（2.33.0 起需带远程调试参数启动）
+# 4. 启动 Antigravity（或直接双击 ~/Applications/Antigravity 中文版.app）
 node bin/cli.js launch
 
-# 5. 查看服务与窗口状态
+# 5. 查看服务、Fuse、引擎与窗口状态
 node bin/cli.js status
 
 # 6. 卸载，恢复官方英文界面
@@ -58,15 +60,19 @@ npm run remove   # 卸载
 | :--- | :--- | :--- |
 | `--font <字体名>` | `JKaiMono` | 自定义字体；`none` 禁用字体注入 |
 | `--brand-title <模式>` | `english` | 品牌名：`english`（保持英文）/ `hidden`（隐藏）/ `translated`（翻译） |
+| `--engine <模式>` | `auto` | 引擎：`auto`（Hook 优先，自动降级）/ `hook`（仅主进程 Hook）/ `cdp`（仅事件驱动 CDP） |
+| `--no-launcher` | `false` | `install` 时不创建 `~/Applications/Antigravity 中文版.app` |
+| `--restart` | `false` | `launch` 时若应用正以英文运行，先退出再重启 |
 | `-h`, `--help` | - | 查看命令行帮助 |
 
 #### 用户文件
 
 | 路径 | 说明 |
 | :--- | :--- |
+| `~/Applications/Antigravity 中文版.app` | 原生启动器（可拖入 Dock / Spotlight 打开） |
 | `~/.antigravity-zh/config.json` | 配置；`"enabled": false` 暂停汉化 |
 | `~/.antigravity-zh/messages.json` | 自定义词条，优先级最高，如 `{ "Settings": "偏好设置" }` |
-| `~/Library/Logs/antigravity-zh.log` | 后台服务日志 |
+| `~/Library/Logs/antigravity-zh.log` | 运行日志（超过 1 MB 自动轮转截断） |
 
 ---
 
@@ -77,13 +83,16 @@ antigravity-zh/
 ├── bin/
 │   └── cli.js          # 命令行入口
 ├── lib/
-│   ├── daemon.js       # 后台服务（窗口发现、注入、热更新、自愈）
+│   ├── app.js          # 应用检查、Electron Fuse 读取与双引擎启动
+│   ├── launcher.js     # 原生 macOS 启动器 .app 生成
+│   ├── daemon.js       # 事件驱动守护进程（降级 CDP 兜底）
 │   ├── service.js      # 运行时部署与 LaunchAgent
 │   ├── bundle.js       # 注入载荷构建
-│   ├── cdp.js          # DevTools 端口发现与 CDP 会话
+│   ├── cdp.js          # Browser-level CDP（autoAttach）与目标发现
+│   ├── log.js          # 日志轮转写入
 │   └── i18n/           # 词库工具（原文提取、校验整理）
-├── runtime/            # 注入页面的汉化引擎与字体样式
-└── locale/             # 简体中文词库、术语表
+├── runtime/            # 注入引擎（main-hook、translator、i18n、font）
+└── locale/             # 简体中文词库、原生菜单词表、术语表
 ```
 
 ---
@@ -92,17 +101,17 @@ antigravity-zh/
 
 ### 1. 系统设置「登录项与扩展」中的 `antigravity-zh` 是什么？
 
-汉化后台服务。关闭后停止汉化，`uninstall` 会将其移除。
+降级用后台服务（仅当 `--engine` 为 `auto` 或 `cdp` 时启用，事件驱动无高频轮询；使用 `--engine hook` 时无任何后台常驻服务）。`uninstall` 会将其移除。
 
 ### 2. Antigravity 官方推送新版本后如何升级？
 
 应用内更新不受影响，更新汉化本身：`git pull` 后重新运行 `node bin/cli.js install`。
 
-> **注意**：Antigravity `2.33.0` 起默认不再开启 CDP 远程调试端口，直接从启动台/程序坞打开无法注入汉化。请使用 `node bin/cli.js launch`（或 `open -a Antigravity --args --remote-debugging-port=0`）启动；若应用已运行，可执行 `node bin/cli.js launch --restart`。
+> **说明**：安装后会生成 `~/Applications/Antigravity 中文版.app`，推荐通过该启动器或 `node bin/cli.js launch` 打开（已汉化运行时会直接切至前台；若误从官方图标以英文启动，点击启动器会弹窗询问是否一键重启切换中文）。
 
 ### 3. 为什么部分界面仍是英文？
 
-原生菜单栏、托盘与系统对话框由主进程创建，无法注入；应用启动后首屏约 1–2 秒为英文。词库维护见 [AGENTS.md](AGENTS.md)。
+主进程 Hook 模式下已覆盖主窗口、原生菜单栏、Dock 菜单、系统托盘与常见原生弹窗；系统级右键输入法菜单等由 macOS 托管的内容遵循系统语言。词库维护见 [AGENTS.md](AGENTS.md)。
 
 ---
 

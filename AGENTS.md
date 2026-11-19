@@ -12,6 +12,7 @@
 | 文件 | 内容 | 维护方式 |
 | :--- | :--- | :--- |
 | `locale/messages.json` | `{ "英文原文": "中文译文" }`，唯一译文来源 | 手工 / AI 编辑 |
+| `locale/native.json` | Electron 主进程原生菜单、托盘与对话框译文 | 手工 / AI 编辑 |
 | `locale/glossary.json` | `{ "术语": { "zh": 译名, "avoid": [禁用译名] } }` | 手工 / AI 编辑 |
 | `locale/ignore.json` | 确认无需翻译的原文（品牌、按键名、第三方库报错、Google 内部功能、日期格式等） | 手工 / AI 编辑 |
 | `locale/catalog.json` | `{ app, strings[] }`，当前版本的英文原文清单 | 仅由 `i18n extract` 生成 |
@@ -73,10 +74,14 @@ node bin/cli.js i18n check      # 校验，存在 error 时退出码为 1
 ## 代码结构
 
 ```
-runtime/translator.js   匹配引擎（纯函数，浏览器与 Node 共用，校验结果与页面行为一致）
+runtime/translator.js   匹配引擎（纯函数，倒排索引 + LRU 缓存，浏览器与 Node 共用）
 runtime/i18n.js         DOM 层：文本 / 属性 / 富文本分组、MutationObserver、shadow root
 runtime/font.js         字体样式
+runtime/main-hook.js    主引擎：Electron 主进程 Hook（零闪烁注入 + 原生菜单/托盘/弹窗汉化 + 热更新）
 lib/i18n/               extract（bundle 文本提取）· catalog（清单生成）· check（校验整理）· store（读写）
 lib/bundle.js           注入载荷 = 词条 + translator + i18n + 字体
-lib/daemon.js           守护进程：发现窗口、注入、热更新、自愈
+lib/cdp.js              降级引擎：单连接 Browser-level CDP（autoAttach）与目标发现
+lib/daemon.js           事件驱动后台守护进程（fs.watch + 兜底巡检，纯 CDP 降级用）
+lib/launcher.js         原生 macOS 启动器生成（~/Applications/Antigravity 中文版.app）
+lib/log.js              日志轮转写入
 ```
