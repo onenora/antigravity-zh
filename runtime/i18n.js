@@ -26,16 +26,30 @@
         '[data-testid="side-question-followup-user"]', '[data-testid="side-question-answer"] [data-markdown-root]',
         '[data-testid="automation-instructions-markdown"]', '[data-testid="lsp-symbol-hover-card"]',
         '[data-testid="webview-download-filename"]', '[data-testid="live-user-turn"]', '[data-testid="live-agent-turn"]',
-        '[data-testid="transcript-line-text"]'
+        '[data-testid="transcript-line-text"]',
+        '#swarm-title', '#swarm-meta', '.msg-body', '#raw', '[data-testid="swarm-raw"]', '#ov-plain'
     ].join(',');
 
     const isPath = (s) => /^(?:[~/]|\.\.?\/|file:\/\/).*\//.test(s) || /\/\.gemini\/|\/SKILL\.md/i.test(s);
     const hasWords = (s) => /[A-Za-z]{2,}/.test(s);
 
-    /** 文本节点状态：src 为原文，out 为写入的译文；节点值等于 out 时视为已处理 */
+    /** 文本与属性状态：src 为原文，out 为写入的译文；配合 WeakRef 跟踪以支持热还原 */
     const state = new WeakMap();
+    const attrState = new WeakMap();
+    const trackedTextSet = new WeakSet();
+    const trackedTextRefs = [];
+    const trackedAttrSet = new WeakSet();
+    const trackedAttrRefs = [];
     const groups = new WeakSet();
     const roots = new WeakSet();
+
+    function pruneRefs(refs) {
+        let w = 0;
+        for (let r = 0; r < refs.length; r++) {
+            if (refs[r].deref()) refs[w++] = refs[r];
+        }
+        refs.length = w;
+    }
 
     const sourceOf = (node) => {
         const s = state.get(node);
@@ -44,6 +58,11 @@
 
     function write(node, src, out) {
         state.set(node, { src, out });
+        if (src !== out && !trackedTextSet.has(node)) {
+            trackedTextSet.add(node);
+            trackedTextRefs.push(new WeakRef(node));
+            if (trackedTextRefs.length > 4096) pruneRefs(trackedTextRefs);
+        }
         if (node.nodeValue !== out) node.nodeValue = out;
     }
 
@@ -60,15 +79,34 @@
         const src = sourceOf(node);
         const out = translateRaw(src);
         if (out != null) write(node, src, out);
-        else if (src !== node.nodeValue) node.nodeValue = src;
+        else if (src !== node.nodeValue) {
+            node.nodeValue = src;
+            state.delete(node);
+        }
     }
 
     function visitAttrs(el) {
+        let rec = attrState.get(el);
         for (const name of ATTRS) {
             const v = el.getAttribute(name);
-            if (!v) continue;
-            const t = translateRaw(v);
-            if (t != null && t !== v) el.setAttribute(name, t);
+            const prev = rec && rec[name];
+            if (!v && !prev) continue;
+            const cur = v || '';
+            const src = prev && prev.out === cur ? prev.src : cur;
+            const t = translateRaw(src);
+            if (t != null && t !== src) {
+                if (!rec) { rec = {}; attrState.set(el, rec); }
+                rec[name] = { src, out: t };
+                if (!trackedAttrSet.has(el)) {
+                    trackedAttrSet.add(el);
+                    trackedAttrRefs.push(new WeakRef(el));
+                    if (trackedAttrRefs.length > 2048) pruneRefs(trackedAttrRefs);
+                }
+                if (cur !== t) el.setAttribute(name, t);
+            } else if (prev && prev.out === cur && src !== cur) {
+                el.setAttribute(name, src);
+                delete rec[name];
+            }
         }
     }
 
@@ -187,5 +225,25 @@
     AGZH_ONTEARDOWN(() => {
         observer.disconnect();
         if (Element.prototype.attachShadow === patchedAttachShadow) Element.prototype.attachShadow = attachShadow;
+        for (const ref of trackedTextRefs) {
+            const node = ref.deref();
+            if (!node) continue;
+            const s = state.get(node);
+            if (s && s.src !== s.out && node.nodeValue === s.out) node.nodeValue = s.src;
+            state.delete(node);
+        }
+        trackedTextRefs.length = 0;
+        for (const ref of trackedAttrRefs) {
+            const el = ref.deref();
+            if (!el) continue;
+            const rec = attrState.get(el);
+            if (rec) {
+                for (const [name, s] of Object.entries(rec)) {
+                    if (s.src !== s.out && el.getAttribute(name) === s.out) el.setAttribute(name, s.src);
+                }
+                attrState.delete(el);
+            }
+        }
+        trackedAttrRefs.length = 0;
     });
 })();

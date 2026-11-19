@@ -50,6 +50,7 @@ const { appendLog } = require('../lib/log');
 const { createTranslator } = require('./translator');
 
 const APP_URL_RE = /^https:\/\/127\.0\.0\.1:\d+\//;
+const SWARM_URL_RE = /^plugin:\/\/swarm--/i;
 const RELOAD_DEBOUNCE_MS = 300;
 const startedAt = new Date().toISOString();
 
@@ -285,6 +286,19 @@ function translateDialogOptions(opts) {
     return copy;
 }
 
+function injectSubFrames(wc, expr) {
+    if (!expr || !wc || wc.isDestroyed() || !wc.mainFrame || !Array.isArray(wc.mainFrame.framesInSubtree)) return;
+    for (const frame of wc.mainFrame.framesInSubtree) {
+        try {
+            if (frame === wc.mainFrame) continue;
+            const furl = frame.url || '';
+            if (SWARM_URL_RE.test(furl) && typeof frame.executeJavaScript === 'function') {
+                void Promise.resolve(frame.executeJavaScript(expr, true)).catch(() => {});
+            }
+        } catch {}
+    }
+}
+
 function injectWebContents(wc) {
     try {
         if (!wc || wc.isDestroyed()) return;
@@ -297,6 +311,7 @@ function injectWebContents(wc) {
         appContents.add(wc);
         if (state.config && state.config.enabled && state.bundle && state.bundle.source) {
             void Promise.resolve(wc.executeJavaScript(state.bundle.source, true)).catch(() => {});
+            injectSubFrames(wc, state.bundle.source);
             if (isNew) logHook(`已注入主窗口 ${url}`);
         }
         writeRuntimeState();
@@ -309,6 +324,13 @@ function attachWebContents(wc, injectNow = false) {
     wc.on('dom-ready', onReady);
     wc.on('did-finish-load', onReady);
     wc.on('did-navigate-in-page', onReady);
+    wc.on('did-frame-finish-load', () => {
+        try {
+            if (!wc.isDestroyed() && APP_URL_RE.test(wc.getURL()) && state.config && state.config.enabled && state.bundle && state.bundle.source) {
+                injectSubFrames(wc, state.bundle.source);
+            }
+        } catch {}
+    });
     wc.on('destroyed', () => {
         if (appContents.delete(wc)) writeRuntimeState();
     });
@@ -328,7 +350,10 @@ function reloadAll() {
                 if (wc.isDestroyed()) { appContents.delete(wc); continue; }
                 if (!APP_URL_RE.test(wc.getURL())) continue;
                 const expr = enable ? state.bundle.source : 'window.__agzh && window.__agzh.teardown()';
-                if (expr) void Promise.resolve(wc.executeJavaScript(expr, true)).catch(() => {});
+                if (expr) {
+                    void Promise.resolve(wc.executeJavaScript(expr, true)).catch(() => {});
+                    injectSubFrames(wc, expr);
+                }
             } catch {}
         }
 
