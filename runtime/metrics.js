@@ -83,21 +83,84 @@ function resolveFontStack(target, sampleEl) {
     return DEFAULT_FONT_STACK;
 }
 
-function detectTheme(target, sampleEl) {
+function parseHex(str) {
+    if (!str || typeof str !== 'string') return null;
+    const hex = str.trim().replace(/^#/, '');
+    if (/^[0-9a-f]{6}$/i.test(hex)) {
+        return {
+            r: parseInt(hex.slice(0, 2), 16),
+            g: parseInt(hex.slice(2, 4), 16),
+            b: parseInt(hex.slice(4, 6), 16),
+            a: 1,
+        };
+    }
+    if (/^[0-9a-f]{3}$/i.test(hex)) {
+        return {
+            r: parseInt(hex[0] + hex[0], 16),
+            g: parseInt(hex[1] + hex[1], 16),
+            b: parseInt(hex[2] + hex[2], 16),
+            a: 1,
+        };
+    }
+    return null;
+}
+
+function parseColor(str) {
+    return parseRgba(str) || parseHex(str);
+}
+
+function isChromatic(c) {
+    if (!c || c.a < 0.25) return false;
+    return Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) >= 18;
+}
+
+let cachedAccent = null;
+
+function readCssVarColor(names) {
+    try {
+        if (typeof getComputedStyle !== 'function' || !document.documentElement) return null;
+        const rootStyle = getComputedStyle(document.documentElement);
+        for (const name of names) {
+            const raw = rootStyle.getPropertyValue(name);
+            const c = parseColor(raw);
+            if (c && c.a > 0.2) return c;
+        }
+    } catch {}
+    return null;
+}
+
+function firstBgColor(elements, minAlpha = 0.2) {
+    for (const el of elements) {
+        if (!el) continue;
+        try {
+            const c = parseRgba(getComputedStyle(el).backgroundColor);
+            if (c && c.a >= minAlpha) return c;
+        } catch {}
+    }
+    return null;
+}
+
+function detectTheme(target, gapInfo) {
     let dark = false;
+    const leftEl = gapInfo ? gapInfo.leftEl : null;
+    const sendEl = gapInfo ? gapInfo.sendEl : null;
     try {
         if (typeof getComputedStyle === 'function') {
-            let cur = target;
-            let bg = null;
+            const surfaceEl = target && target.firstElementChild ? target.firstElementChild : null;
+            const ancestors = [];
+            let cur = target ? target.parentElement : null;
             while (cur) {
-                const c = parseRgba(getComputedStyle(cur).backgroundColor);
-                if (c && c.a > 0.15) { bg = c; break; }
+                ancestors.push(cur);
                 cur = cur.parentElement;
             }
-            if (!bg && document.body) {
-                const c = parseRgba(getComputedStyle(document.body).backgroundColor);
-                if (c && c.a > 0.15) bg = c;
-            }
+            if (document.body) ancestors.push(document.body);
+            if (document.documentElement) ancestors.push(document.documentElement);
+
+            // 优先采纳输入框内层表面与页面背景色，跟随 Dracula / 任意主题底色
+            const surfaceBg = firstBgColor([surfaceEl], 0.5);
+            const pageBg = firstBgColor(ancestors, 0.35);
+            const bg = surfaceBg || pageBg || firstBgColor([target], 0.35);
+
             if (bg) {
                 const lum = (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) / 255;
                 dark = lum < 0.5;
@@ -105,17 +168,44 @@ function detectTheme(target, sampleEl) {
                 dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
             }
 
-            if (sampleEl) {
-                const fg = parseRgba(getComputedStyle(sampleEl).color);
-                if (fg) {
-                    return {
-                        dark,
-                        fg: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.78)`,
-                        fgHover: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.98)`,
-                        divider: `rgba(${fg.r}, ${fg.g}, ${fg.b}, 0.22)`,
-                    };
-                }
+            // 外层 p-px bg-card-border 常为卡片描边色
+            const borderC = firstBgColor([target], 0.08);
+            const sampleFg = leftEl ? parseRgba(getComputedStyle(leftEl).color) : null;
+            const mainFg = parseRgba(getComputedStyle(target || document.body).color)
+                || (document.body ? parseRgba(getComputedStyle(document.body).color) : null);
+
+            // 强调色：优先取发送按钮真实背景色（如 Dracula #BD93F9），其次读取常见主题 CSS 变量
+            let accentC = null;
+            if (sendEl) {
+                const sc = parseRgba(getComputedStyle(sendEl).backgroundColor);
+                if (isChromatic(sc)) accentC = sc;
             }
+            if (!accentC) {
+                const vc = readCssVarColor(['--primary', '--accent', '--vscode-focusBorder', '--vscode-button-background']);
+                if (isChromatic(vc)) accentC = vc;
+            }
+            if (accentC) cachedAccent = `rgb(${accentC.r}, ${accentC.g}, ${accentC.b})`;
+
+            const cardBg = bg
+                ? `rgba(${bg.r}, ${bg.g}, ${bg.b}, 0.97)`
+                : (dark ? 'rgba(24, 27, 35, 0.97)' : 'rgba(255, 255, 255, 0.98)');
+            const cardBorder = borderC && borderC !== surfaceBg
+                ? `rgba(${borderC.r}, ${borderC.g}, ${borderC.b}, ${Math.max(0.35, Math.min(0.9, borderC.a))})`
+                : (dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(15, 23, 42, 0.14)');
+
+            const fgC = sampleFg || mainFg;
+            const cardFgC = mainFg || sampleFg;
+            return {
+                dark,
+                fg: fgC ? `rgba(${fgC.r}, ${fgC.g}, ${fgC.b}, 0.78)` : (dark ? 'rgba(216, 222, 234, 0.76)' : 'rgba(55, 65, 81, 0.82)'),
+                fgHover: fgC ? `rgba(${fgC.r}, ${fgC.g}, ${fgC.b}, 0.98)` : (dark ? 'rgba(244, 247, 252, 0.98)' : 'rgba(17, 24, 39, 0.98)'),
+                divider: fgC ? `rgba(${fgC.r}, ${fgC.g}, ${fgC.b}, 0.22)` : (dark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(15, 23, 42, 0.18)'),
+                cardBg,
+                cardFg: cardFgC ? `rgba(${cardFgC.r}, ${cardFgC.g}, ${cardFgC.b}, 0.95)` : (dark ? 'rgba(235, 238, 245, 0.95)' : 'rgba(20, 24, 34, 0.94)'),
+                cardBorder,
+                pillBg: bg ? `rgba(${bg.r}, ${bg.g}, ${bg.b}, 0.92)` : (dark ? 'rgba(24, 26, 32, 0.9)' : 'rgba(250, 251, 254, 0.94)'),
+                accent: cachedAccent || '#34d399',
+            };
         }
     } catch {}
     return {
@@ -123,6 +213,11 @@ function detectTheme(target, sampleEl) {
         fg: dark ? 'rgba(216, 222, 234, 0.76)' : 'rgba(55, 65, 81, 0.82)',
         fgHover: dark ? 'rgba(244, 247, 252, 0.98)' : 'rgba(17, 24, 39, 0.98)',
         divider: dark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(15, 23, 42, 0.18)',
+        cardBg: dark ? 'rgba(24, 27, 35, 0.97)' : 'rgba(255, 255, 255, 0.98)',
+        cardFg: dark ? 'rgba(235, 238, 245, 0.95)' : 'rgba(20, 24, 34, 0.94)',
+        cardBorder: dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(15, 23, 42, 0.14)',
+        pillBg: dark ? 'rgba(24, 26, 32, 0.9)' : 'rgba(250, 251, 254, 0.94)',
+        accent: cachedAccent || '#34d399',
     };
 }
 
@@ -157,6 +252,7 @@ style.textContent = `
   --agzh-card-bg: rgba(24, 27, 35, 0.97);
   --agzh-card-fg: rgba(235, 238, 245, 0.95);
   --agzh-card-border: rgba(255, 255, 255, 0.14);
+  --agzh-accent: #34d399;
 }
 :host([data-theme="light"]) {
   --agzh-fg: rgba(55, 65, 81, 0.82);
@@ -211,7 +307,7 @@ style.textContent = `
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #34d399;
+  background: var(--agzh-accent);
   flex-shrink: 0;
 }
 .agzh-pill[data-level="warn"] .agzh-dot { background: #fbbf24; }
@@ -293,7 +389,7 @@ style.textContent = `
 .agzh-bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: #34d399;
+  background: var(--agzh-accent);
   transition: width 180ms ease;
 }
 .agzh-bar-fill[data-level="warn"] { background: #fbbf24; }
@@ -389,9 +485,11 @@ function findToolbarGap(target, ar) {
 
     const leftItem = items[bestIdx];
     const rightItem = items[bestIdx + 1];
+    const sendItem = items[items.length - 1];
     return {
         leftEl: leftItem.el,
         rightEl: rightItem.el,
+        sendEl: sendItem ? sendItem.el : rightItem.el,
         leftEdge: leftItem.right,
         rightEdge: rightItem.left,
         centerY: (leftItem.top + leftItem.bottom) / 2,
@@ -446,12 +544,17 @@ function updatePosition() {
     const gapInfo = findToolbarGap(target, r);
     observeTargets(target, gapInfo ? gapInfo.leftEl : null, gapInfo ? gapInfo.rightEl : null);
 
-    const theme = detectTheme(target, gapInfo ? gapInfo.leftEl : null);
+    const theme = detectTheme(target, gapInfo);
     host.setAttribute('data-theme', theme.dark ? 'dark' : 'light');
     host.style.setProperty('--agzh-font', resolveFontStack(target, gapInfo ? gapInfo.leftEl : null));
     host.style.setProperty('--agzh-fg', theme.fg);
     host.style.setProperty('--agzh-fg-hover', theme.fgHover);
     host.style.setProperty('--agzh-divider', theme.divider);
+    host.style.setProperty('--agzh-card-bg', theme.cardBg);
+    host.style.setProperty('--agzh-card-fg', theme.cardFg);
+    host.style.setProperty('--agzh-card-border', theme.cardBorder);
+    host.style.setProperty('--agzh-pill-bg', theme.pillBg);
+    host.style.setProperty('--agzh-accent', theme.accent);
 
     host.style.display = 'block';
     if (gapInfo) {
