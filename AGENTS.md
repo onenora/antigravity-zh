@@ -86,7 +86,6 @@ lib/cdp.js              降级引擎：单连接 Browser-level CDP（autoAttach�
 lib/daemon.js           事件驱动后台守护进程（fs.watch + 兜底巡检，纯 CDP 降级用）
 lib/launcher.js         原生 Swift 启动器编译与打包（~/Applications/Antigravity-zh.app）
 launcher/main.swift     原生 Swift 启动器源码（零运行时 Node 依赖）
-plugin/                 配套 Antigravity 控制面板 Sidecar 插件（安装至 ~/.gemini/config/plugins/antigravity-zh）
 .agents/skills/         仓库内词库维护 Skill
 lib/log.js              日志轮转写入
 ```

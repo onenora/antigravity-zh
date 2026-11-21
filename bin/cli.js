@@ -22,10 +22,9 @@ Antigravity 简体中文汉化（双引擎零侵入注入，不修改官方应�
   install            部署运行时与降级守护进程（默认通过 launch 命令启动）
   launch             通过 CLI 启动 Antigravity（Hook 优先，不可用时自动降级 CDP）
   launcher [remove]  单独编译原生 Swift 启动器 ${paths.tilde(paths.LAUNCHER_APP)}（remove 移除）
-  plugin [remove]    安装或移除配套 Antigravity 插件（侧边中文控制面板）
-  metrics [on|off]   一键开启或关闭实时遥测胶囊（默认关闭，热更新生效）
-  uninstall          移除守护进程、启动器与配套插件，恢复英文界面
-  status             查看应用签名、Fuse、启动器、遥测、插件与窗口状态
+  metrics [on|off]   一键开启或关闭实时遥测胶囊（默认开启，热更新生效）
+  uninstall          移除守护进程与启动器，恢复英文界面
+  status             查看应用签名、Fuse、启动器、遥测与窗口状态
   daemon             前台运行事件驱动守护进程（供 LaunchAgent 调用）
 
 词条维护（见 AGENTS.md）:
@@ -157,27 +156,6 @@ async function buildLauncherCmd(_options, sub = 'build') {
     console.log('[完成] 现在可直接双击或在启动台/Spotlight 中打开 Antigravity-zh.app');
 }
 
-async function pluginCmd(_options, sub = 'install') {
-    if (sub === 'remove' || sub === 'uninstall') {
-        fs.rmSync(paths.PLUGIN_DIR, { recursive: true, force: true });
-        console.log(`[插件] 已移除 ${paths.tilde(paths.PLUGIN_DIR)}`);
-        return;
-    }
-    if (sub !== 'install') {
-        throw new Error(`未知子命令 plugin ${sub}，可用: install | remove`);
-    }
-    const repoPlugin = path.join(paths.ROOT_DIR, 'plugin');
-    const deployedPlugin = path.join(paths.RUNTIME_DIR, 'plugin');
-    const src = fs.existsSync(repoPlugin) ? repoPlugin : deployedPlugin;
-    if (!fs.existsSync(src)) {
-        throw new Error(`未找到插件源码目录: ${src}`);
-    }
-    fs.mkdirSync(path.dirname(paths.PLUGIN_DIR), { recursive: true });
-    fs.rmSync(paths.PLUGIN_DIR, { recursive: true, force: true });
-    fs.cpSync(src, paths.PLUGIN_DIR, { recursive: true });
-    console.log(`[插件] 已安装至 ${paths.tilde(paths.PLUGIN_DIR)}（可在 Antigravity 插件管理中启用控制面板）`);
-}
-
 async function metricsCmd(options, sub) {
     let next;
     if (sub === 'on' || sub === 'enable' || sub === 'true') next = true;
@@ -205,7 +183,7 @@ async function uninstall() {
     const extras = [];
     if (hookState) extras.push('已还原活跃 Hook 窗口与原生菜单');
     if (cdpCount) extras.push(`停止 ${cdpCount} 个 CDP 窗口的汉化`);
-    console.log(`[完成] 已移除守护进程、启动器与配套插件${extras.length ? `（${extras.join('，')}）` : ''}`);
+    console.log(`[完成] 已移除守护进程与启动器${extras.length ? `（${extras.join('，')}）` : ''}`);
 }
 
 async function status() {
@@ -214,8 +192,6 @@ async function status() {
     const lStatus = launcher.launcherStatus();
     console.log(`[启动器] ${lStatus.installed ? `已构建 (${paths.tilde(lStatus.path)})` : '未构建（默认 CLI 启动；可运行 node bin/cli.js launcher 构建）'}`);
     console.log(`[遥测] ${config.metrics ? '开启' : '关闭'}（node:sqlite ${isSqliteAvailable() ? '可用' : '不可用'}）`);
-    const pluginInstalled = fs.existsSync(paths.PLUGIN_DIR);
-    console.log(`[插件] ${pluginInstalled ? `已安装 (${paths.tilde(paths.PLUGIN_DIR)})` : '未安装（可运行 node bin/cli.js plugin 安装）'}`);
     const agent = service.status();
     console.log(`[服务] ${!agent.loaded ? (config.engine === 'hook' ? '未安装（纯 Hook 模式无需常驻）' : '未安装') : agent.pid ? `运行中 (pid ${agent.pid})` : '已加载，未运行'}`);
 
@@ -254,7 +230,6 @@ const COMMANDS = {
     install,
     launch,
     launcher: buildLauncherCmd,
-    plugin: pluginCmd,
     metrics: metricsCmd,
     uninstall,
     status,
