@@ -177,6 +177,11 @@
     border-top: 1px solid var(--border);
     font-size: 11px;
     color: var(--muted);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    max-height: 76px;
+    overflow: auto;
   }
 </style>
 </head>
@@ -266,7 +271,7 @@
 
   <section class="card">
     <div class="card-head">
-      <h2>运行日志 (~/.Logs)</h2>
+      <h2>运行日志 (~/Library/Logs)</h2>
       <button id="logRefreshBtn" type="button">刷新日志</button>
     </div>
     <pre id="logBox" class="log-box">暂无日志</pre>

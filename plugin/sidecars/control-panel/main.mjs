@@ -25,16 +25,27 @@ function jsonOrError(result) {
     return result;
 }
 
+function parseBody(data) {
+    if (typeof data === 'string') {
+        try { return JSON.parse(data); } catch { return null; }
+    }
+    if (data && typeof data === 'object' && typeof data.body === 'string') {
+        try { return JSON.parse(data.body); } catch { return null; }
+    }
+    return data;
+}
+
 app.page('/', () => readFileSync(join(__dirname, 'index.html'), 'utf8'));
 
 app.api('/api/status', () => getStatusPayload(userPaths), 'GET');
 
-app.api('/api/config', (data) => jsonOrError(saveConfigPatch(userPaths, data)), 'POST');
+app.api('/api/config', (data) => jsonOrError(saveConfigPatch(userPaths, parseBody(data))), 'POST');
 
 app.api('/api/messages', () => getMessagesPayload(userPaths), 'GET');
 
 app.api('/api/messages', (data) => {
-    const raw = data && typeof data.text === 'string' ? data.text : '';
+    const parsed = parseBody(data);
+    const raw = parsed && typeof parsed.text === 'string' ? parsed.text : '';
     return jsonOrError(saveMessagesPayload(userPaths, raw));
 }, 'POST');
 
