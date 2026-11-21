@@ -1,6 +1,6 @@
 {
   "name": "antigravity-zh",
-  "version": "3.2.0",
+  "version": "2.34.0",
   "description": "Antigravity macOS 简体中文汉化：双引擎运行时注入（主进程 Hook + 事件驱动 CDP），不修改应用包，保留官方签名与应用内更新",
   "main": "bin/cli.js",
   "bin": {

@@ -5,6 +5,7 @@
 ## 基线
 
 - 以本机安装的 Antigravity 为准，当前基线 **2.34.0**，只向后兼容新版本。
+- 本项目版本号（`package.json` 的 `version`）跟随 Antigravity 基线版本同步升级，升级词库时一并更新 `package.json`、`AGENTS.md` 与 `README.md` 中的版本号。
 - 原文不在当前版本中的词条视为历史包袱，由 `i18n fmt` 自动移除；不要为旧版本保留词条。
 
 ## 文件

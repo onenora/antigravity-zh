@@ -38,3 +38,5 @@ description: Antigravity 升级或词条维护时，执行提取、去重、补�
    node bin/cli.js i18n fmt
    node bin/cli.js i18n check
    ```
+
+6. 同步项目版本号跟随 Antigravity 版本：将 `package.json` 的 `version`、`AGENTS.md` 基线版本与 `README.md` 测试环境版本号更新为当前 Antigravity 版本。
