@@ -380,12 +380,27 @@ style.textContent = `
   text-align: right;
 }
 .agzh-bar {
-  height: 4px;
+  display: flex;
+  height: 5px;
   border-radius: 999px;
-  background: rgba(128, 138, 160, 0.24);
+  background: rgba(128, 138, 160, 0.22);
   overflow: hidden;
-  margin: 4px 0 2px;
+  margin: 5px 0 4px;
 }
+.agzh-bar-seg {
+  height: 100%;
+  transition: width 180ms ease;
+}
+.agzh-bar-seg + .agzh-bar-seg {
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.18);
+}
+.agzh-bar-seg[data-kind="in"],
+.agzh-leg-dot[data-kind="in"] { background: #38bdf8; }
+.agzh-bar-seg[data-kind="cw"],
+.agzh-leg-dot[data-kind="cw"] { background: #f59e0b; }
+.agzh-bar-seg[data-kind="cr"],
+.agzh-leg-dot[data-kind="cr"] { background: var(--agzh-accent); }
+.agzh-bar-seg[data-kind="compact"] { background: #34d399; }
 .agzh-bar-fill {
   height: 100%;
   border-radius: 999px;
@@ -394,6 +409,65 @@ style.textContent = `
 }
 .agzh-bar-fill[data-level="warn"] { background: #fbbf24; }
 .agzh-bar-fill[data-level="danger"] { background: #f87171; }
+.agzh-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3px 8px;
+  font-size: 10px;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+}
+.agzh-leg-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.agzh-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.agzh-leg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.agzh-leg-dot[data-kind="rem"] {
+  background: transparent;
+  border: 1px solid rgba(128, 138, 160, 0.6);
+  box-sizing: border-box;
+}
+.agzh-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.agzh-sec-head .agzh-sec-label { margin-bottom: 0; }
+.agzh-compact-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.16);
+  color: #34d399;
+}
+.agzh-compact-tag[data-state="compacting"] {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+}
+:host([data-theme="light"]) .agzh-compact-tag { color: #059669; }
+:host([data-theme="light"]) .agzh-compact-tag[data-state="compacting"] { color: #d97706; }
+.agzh-compact-note {
+  font-size: 10px;
+  opacity: 0.72;
+  margin-top: 2px;
+}
 .agzh-note {
   margin-top: 7px;
   padding-top: 6px;
@@ -668,13 +742,60 @@ function makeRow(label, value) {
     return row;
 }
 
+function makeLeg(kind, text) {
+    const leg = document.createElement('span');
+    leg.className = 'agzh-leg';
+    const dot = document.createElement('span');
+    dot.className = 'agzh-leg-dot';
+    dot.setAttribute('data-kind', kind);
+    leg.appendChild(dot);
+    leg.appendChild(makeSpan(text));
+    return leg;
+}
+
+function computeBarSegments(totalPct, items) {
+    const positive = items.filter((it) => it.val > 0);
+    const sum = positive.reduce((acc, it) => acc + it.val, 0);
+    if (sum <= 0 || totalPct <= 0) return [];
+    const minPct = 1.5;
+    const raw = positive.map((it) => ({
+        kind: it.kind,
+        pct: (it.val / sum) * totalPct,
+    }));
+    if (raw.length > 1 && totalPct > minPct * raw.length) {
+        let deficit = 0;
+        let flex = 0;
+        for (const r of raw) {
+            if (r.pct < minPct) {
+                deficit += minPct - r.pct;
+                r.pct = minPct;
+            } else {
+                flex += r.pct - minPct;
+            }
+        }
+        if (deficit > 0 && flex > 0) {
+            const ratio = Math.min(1, deficit / flex);
+            for (const r of raw) {
+                if (r.pct > minPct) r.pct -= (r.pct - minPct) * ratio;
+            }
+        }
+    }
+    return raw;
+}
+
 function renderPill() {
     clearEl(pill);
     const dot = document.createElement('span');
     dot.className = 'agzh-dot';
     pill.appendChild(dot);
 
+    const compact = snapshot && snapshot.compact;
     if (!snapshot || snapshot.status === 'waiting') {
+        if (compact && compact.compacting) {
+            pill.setAttribute('data-level', 'warn');
+            pill.appendChild(makeSpan('上下文压缩中...', 'agzh-text'));
+            return;
+        }
         pill.setAttribute('data-level', 'muted');
         pill.appendChild(makeSpan('遥测 · 等待首轮响应', 'agzh-text'));
         return;
@@ -690,18 +811,27 @@ function renderPill() {
         return;
     }
 
-    const level = ctxLevel(snapshot.contextPct);
+    const level = (compact && compact.compacting)
+        ? 'warn'
+        : (compact && compact.pending)
+            ? 'ok'
+            : ctxLevel(snapshot.contextPct);
     pill.setAttribute('data-level', level);
 
     const parts = [];
     const lc = snapshot.lastCall;
+    if (compact && compact.compacting) {
+        parts.push('压缩中...');
+    }
     if (lc && lc.tokPerSec !== null) {
         parts.push(fmtRate(lc.tokPerSec));
     }
     if (lc && lc.ttftMs !== null) {
         parts.push(`TTFT ${fmtMs(lc.ttftMs)}`);
     }
-    if (snapshot.contextLimit) {
+    if (compact && compact.pending) {
+        parts.push(compact.summaryKb > 0 ? `上下文已压缩 (${compact.summaryKb} KB)` : '上下文已压缩');
+    } else if (snapshot.contextLimit) {
         parts.push(`上下文 ${fmtNum(snapshot.contextUsed)}/${fmtNum(snapshot.contextLimit)} (${Math.round(snapshot.contextPct || 0)}%)`);
     }
     if (lc && lc.cacheHitRate !== null) {
@@ -721,8 +851,10 @@ function renderCard() {
     head.appendChild(makeSpan(badgeText, 'agzh-badge'));
     card.appendChild(head);
 
+    const compact = snapshot && snapshot.compact;
+
     if (!snapshot || snapshot.status === 'waiting') {
-        card.appendChild(makeRow('状态', '等待当前对话产生模型调用'));
+        card.appendChild(makeRow('状态', compact && compact.compacting ? '正在压缩上下文...' : '等待当前对话产生模型调用'));
         const note = document.createElement('div');
         note.className = 'agzh-note';
         note.textContent = '仅在本机读取会话增量遥测，不解析提示词原文。';
@@ -743,26 +875,87 @@ function renderCard() {
         return;
     }
 
+    const lc = snapshot.lastCall;
     const ctxSec = document.createElement('div');
     ctxSec.className = 'agzh-section';
-    ctxSec.appendChild(makeSpan('上下文压缩水位', 'agzh-sec-label'));
-    const ctxStr = snapshot.contextLimit
-        ? `${fmtExact(snapshot.contextUsed)} / ${fmtExact(snapshot.contextLimit)} (${fmtPct((snapshot.contextPct || 0) / 100)})`
-        : '—';
-    ctxSec.appendChild(makeRow('已用 / 上限', ctxStr));
-    if (snapshot.contextLimit) {
+    const ctxHead = document.createElement('div');
+    ctxHead.className = 'agzh-sec-head';
+    ctxHead.appendChild(makeSpan('上下文压缩水位', 'agzh-sec-label'));
+    if (compact && compact.compacting) {
+        const tag = makeSpan('压缩中...', 'agzh-compact-tag');
+        tag.setAttribute('data-state', 'compacting');
+        ctxHead.appendChild(tag);
+    } else if (compact && compact.pending) {
+        ctxHead.appendChild(makeSpan(compact.summaryKb > 0 ? `已压缩 · 摘要 ${compact.summaryKb} KB` : '已压缩', 'agzh-compact-tag'));
+    }
+    ctxSec.appendChild(ctxHead);
+
+    if (compact && compact.pending) {
+        ctxSec.appendChild(makeRow('当前状态', compact.summaryKb > 0 ? `已完成压缩（摘要 ${compact.summaryKb} KB）` : '已完成压缩'));
         const bar = document.createElement('div');
         bar.className = 'agzh-bar';
-        const fill = document.createElement('div');
-        fill.className = 'agzh-bar-fill';
-        fill.setAttribute('data-level', ctxLevel(snapshot.contextPct));
-        fill.style.width = `${Math.max(2, Math.min(100, snapshot.contextPct || 0))}%`;
-        bar.appendChild(fill);
+        const seg = document.createElement('div');
+        seg.className = 'agzh-bar-seg';
+        seg.setAttribute('data-kind', 'compact');
+        seg.style.width = '8%';
+        bar.appendChild(seg);
         ctxSec.appendChild(bar);
+        if (snapshot.contextLimit) {
+            const note = document.createElement('div');
+            note.className = 'agzh-compact-note';
+            note.textContent = `压缩前 ${fmtExact(snapshot.contextUsed)} / ${fmtExact(snapshot.contextLimit)} (${fmtPct((snapshot.contextPct || 0) / 100)}) · 下轮调用后刷新水位`;
+            ctxSec.appendChild(note);
+        }
+    } else {
+        const ctxStr = snapshot.contextLimit
+            ? `${fmtExact(snapshot.contextUsed)} / ${fmtExact(snapshot.contextLimit)} (${fmtPct((snapshot.contextPct || 0) / 100)})`
+            : '—';
+        ctxSec.appendChild(makeRow('已用 / 上限', ctxStr));
+        if (snapshot.contextLimit) {
+            const filledPct = Math.max(2, Math.min(100, snapshot.contextPct || 0));
+            const bar = document.createElement('div');
+            bar.className = 'agzh-bar';
+            const segs = lc ? computeBarSegments(filledPct, [
+                { kind: 'in', val: lc.inputUncached },
+                { kind: 'cw', val: lc.cacheWrite },
+                { kind: 'cr', val: lc.cacheRead },
+            ]) : [];
+            if (segs.length > 0) {
+                for (const s of segs) {
+                    const seg = document.createElement('div');
+                    seg.className = 'agzh-bar-seg';
+                    seg.setAttribute('data-kind', s.kind);
+                    seg.style.width = `${s.pct.toFixed(2)}%`;
+                    bar.appendChild(seg);
+                }
+            } else {
+                const fill = document.createElement('div');
+                fill.className = 'agzh-bar-fill';
+                fill.setAttribute('data-level', ctxLevel(snapshot.contextPct));
+                fill.style.width = `${filledPct}%`;
+                bar.appendChild(fill);
+            }
+            ctxSec.appendChild(bar);
+
+            if (lc) {
+                const legend = document.createElement('div');
+                legend.className = 'agzh-legend';
+                const leftGrp = document.createElement('span');
+                leftGrp.className = 'agzh-leg-group';
+                leftGrp.appendChild(makeLeg('in', `新增 ${fmtNum(lc.inputUncached)}`));
+                if (lc.cacheWrite > 0) {
+                    leftGrp.appendChild(makeLeg('cw', `写缓存 ${fmtNum(lc.cacheWrite)}`));
+                }
+                leftGrp.appendChild(makeLeg('cr', `缓存 ${fmtNum(lc.cacheRead)}`));
+                legend.appendChild(leftGrp);
+                const remain = Math.max(0, snapshot.contextLimit - (snapshot.contextUsed || 0));
+                legend.appendChild(makeLeg('rem', `余 ${fmtNum(remain)}`));
+                ctxSec.appendChild(legend);
+            }
+        }
     }
     card.appendChild(ctxSec);
 
-    const lc = snapshot.lastCall;
     if (lc) {
         const turnSec = document.createElement('div');
         turnSec.className = 'agzh-section';
@@ -780,7 +973,7 @@ function renderCard() {
     if (ses && ses.calls > 0) {
         const sesSec = document.createElement('div');
         sesSec.className = 'agzh-section';
-        sesSec.appendChild(makeSpan('会话累计（附着起）', 'agzh-sec-label'));
+        sesSec.appendChild(makeSpan('会话累计', 'agzh-sec-label'));
         const outStr = ses.thinkingTokens !== null
             ? `${fmtExact(ses.outputTokens)} (思考 ${fmtExact(ses.thinkingTokens)} / 正文 ${fmtExact(ses.responseTokens)})`
             : fmtExact(ses.outputTokens);
